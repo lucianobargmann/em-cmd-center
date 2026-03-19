@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EM Command Center</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <span class="header-date" id="header-date"></span>
+                <span class="agent-dot" id="agent-dot" title="Agent status"></span>
+            </div>
+            <div class="header-right">
+                <span class="progress-pill" id="progress-pill">0/0 done</span>
+                <button class="btn-report" id="btn-report" title="Daily report">Report</button>
+                <button class="btn-refresh" id="btn-refresh" title="Trigger Jira poll">↻</button>
+            </div>
+        </header>
+
+        <!-- Add task -->
+        <div class="add-task-bar">
+            <input type="text" id="task-input" placeholder="Add a task..." autocomplete="off">
+            <select id="priority-select">
+                <option value="p1">P1</option>
+                <option value="p2" selected>P2</option>
+                <option value="p3">P3</option>
+                <option value="p4">P4</option>
+            </select>
+            <select id="category-select">
+                <option value="delivery">delivery</option>
+                <option value="people">people</option>
+                <option value="hiring">hiring</option>
+                <option value="reports">reports</option>
+                <option value="infra">infra</option>
+                <option value="email">email</option>
+                <option value="other" selected>other</option>
+            </select>
+            <button class="btn-add" id="btn-add">+ Add</button>
+        </div>
+
+        <!-- Goals section -->
+        <div class="goals-section" id="goals-section">
+            <div class="goals-header">
+                <span class="goals-week-label" id="goals-week-label">CTO Goals</span>
+                <button class="btn-add-goal" id="btn-add-goal">+ Goal</button>
+            </div>
+            <div class="goals-list" id="goals-list"></div>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="filter-bar" id="filter-bar">
+            <button class="filter-btn active" data-filter="">All</button>
+            <button class="filter-btn" data-filter="p1">P1</button>
+            <button class="filter-btn" data-filter="p2">P2</button>
+            <button class="filter-btn" data-filter="p3">P3</button>
+            <button class="filter-btn" data-filter="open">Open</button>
+            <button class="filter-btn" data-filter="done">Done</button>
+            <button class="filter-btn" data-filter="auto">Auto</button>
+            <button class="btn-clear-done" id="btn-clear-done">Clear done</button>
+        </div>
+
+        <!-- Task list -->
+        <div class="task-list" id="task-list"></div>
+    </div>
+
+    <!-- Report modal -->
+    <div class="modal-overlay" id="report-modal">
+        <div class="modal report-modal">
+            <div class="modal-header">
+                <span class="modal-title">Daily Report</span>
+                <button class="modal-close" id="report-modal-close">&times;</button>
+            </div>
+            <pre class="report-text" id="report-text"></pre>
+            <div class="modal-footer">
+                <button class="btn-copy" id="btn-copy-report">Copy to Clipboard</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Goal add/edit modal -->
+    <div class="modal-overlay" id="goal-modal">
+        <div class="modal goal-modal">
+            <div class="modal-header">
+                <span class="modal-title" id="goal-modal-title">Add Goal</span>
+                <button class="modal-close" id="goal-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="goal-edit-id">
+                <label>Title</label>
+                <input type="text" id="goal-title-input" placeholder="Goal title..." autocomplete="off">
+                <label>Description</label>
+                <textarea id="goal-desc-input" rows="3" placeholder="Details..."></textarea>
+                <label>Progress Notes</label>
+                <textarea id="goal-notes-input" rows="2" placeholder="Progress update..."></textarea>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-save-goal" id="btn-save-goal">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
