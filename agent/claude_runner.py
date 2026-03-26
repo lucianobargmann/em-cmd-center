@@ -90,11 +90,11 @@ async def run_claude_suggest(issue_key: str) -> dict:
     proc = await asyncio.create_subprocess_exec(
         CLAUDE_BIN,
         "--print",
+        "-p", user_message,
         "--system-prompt", system_prompt,
         "--output-format", "json",
         "--dangerously-skip-permissions",
         "--allowedTools", "Read",
-        user_message,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
