@@ -681,6 +681,18 @@ function createTaskRow(task, isDoNext) {
             togglePanel(task.id, 'analysis');
         });
         actions.appendChild(analysisBtn);
+
+        // Suggest Comment button
+        const commentBtn = document.createElement('button');
+        commentBtn.className = 'btn-action';
+        commentBtn.innerHTML = '&#x1F4AC;';
+        commentBtn.title = 'Suggest Comment';
+        commentBtn.style.fontSize = '13px';
+        commentBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePanel(task.id, 'comment');
+        });
+        actions.appendChild(commentBtn);
     }
 
     // Ranking Rationale button (all tasks)
@@ -745,6 +757,8 @@ function togglePanel(taskId, type) {
 
     if (type === 'analysis') {
         showAnalysis(taskId, panel);
+    } else if (type === 'comment') {
+        showCommentSuggest(taskId, panel);
     } else {
         showRanking(taskId, panel);
     }
@@ -835,6 +849,78 @@ async function showRanking(taskId, panel) {
     } catch (e) {
         panel.innerHTML = '<div class="detail-error">Failed to load ranking</div>';
         console.error('Ranking error:', e);
+    }
+}
+
+async function showCommentSuggest(taskId, panel) {
+    try {
+        const resp = await fetch(`/api/tasks/${taskId}/suggest-comment`, { method: 'POST' });
+        if (!resp.ok) {
+            const err = await resp.json();
+            panel.innerHTML = `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
+            return;
+        }
+        const data = await resp.json();
+
+        if (data.error) {
+            panel.innerHTML = `<div class="detail-error">${escapeHtml(data.error)}</div>`;
+            return;
+        }
+
+        let html = '<div class="detail-content">';
+        html += `<div class="detail-summary">${escapeHtml(data.jira_key)} — ${data.comments_count} existing comment(s)</div>`;
+        html += `<div class="detail-desc">${escapeHtml(data.summary)}</div>`;
+        html += '<div class="detail-actions-header">Suggested Comment</div>';
+        html += `<textarea class="comment-textarea" id="comment-text-${taskId}">${escapeHtml(data.suggested_comment)}</textarea>`;
+        html += `<button class="btn-send-comment" onclick="postComment('${taskId}')">Send to Jira</button>`;
+        html += `<div class="comment-status" id="comment-status-${taskId}"></div>`;
+        html += '</div>';
+
+        panel.innerHTML = html;
+    } catch (e) {
+        panel.innerHTML = '<div class="detail-error">Failed to generate comment suggestion</div>';
+        console.error('Comment suggest error:', e);
+    }
+}
+
+async function postComment(taskId) {
+    const textarea = document.getElementById(`comment-text-${taskId}`);
+    const status = document.getElementById(`comment-status-${taskId}`);
+    const btn = textarea.parentElement.querySelector('.btn-send-comment');
+    const comment = textarea.value.trim();
+
+    if (!comment) {
+        status.textContent = 'Comment cannot be empty';
+        status.className = 'comment-status error';
+        return;
+    }
+
+    btn.disabled = true;
+    status.textContent = 'Posting...';
+    status.className = 'comment-status';
+
+    try {
+        const resp = await fetch(`/api/tasks/${taskId}/post-comment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ comment }),
+        });
+        const data = await resp.json();
+
+        if (resp.ok && data.success) {
+            status.textContent = `Comment posted to ${data.jira_key}`;
+            status.className = 'comment-status success';
+            textarea.disabled = true;
+        } else {
+            status.textContent = data.detail || 'Failed to post comment';
+            status.className = 'comment-status error';
+            btn.disabled = false;
+        }
+    } catch (e) {
+        status.textContent = 'Network error posting comment';
+        status.className = 'comment-status error';
+        btn.disabled = false;
+        console.error('Post comment error:', e);
     }
 }
 

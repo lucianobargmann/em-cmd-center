@@ -1,10 +1,12 @@
-"""Task action endpoints — AI Analysis and Ranking Rationale."""
+"""Task action endpoints — AI Analysis, Ranking Rationale, and Comment Suggestion."""
 
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
+from agent.claude_runner import run_claude_suggest, write_context_file
 from agent.jira_client import JiraClient
 from config import CONFIG
 from database import get_db
@@ -222,5 +224,72 @@ def get_task_ranking(task_id: str) -> dict:
             "position": position,
             "open_count": open_count,
         }
+    finally:
+        db.close()
+
+
+@router.post("/{task_id}/suggest-comment")
+async def suggest_comment(task_id: str) -> dict:
+    """Fetch Jira ticket + comments, run Claude to suggest a comment."""
+    db = get_db()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not task.jira_key:
+            raise HTTPException(status_code=400, detail="Task has no linked Jira ticket")
+
+        client = _get_jira_client()
+        detail = client.get_issue_detail(task.jira_key)
+        comments = client.get_issue_comments(task.jira_key)
+
+        write_context_file(task.jira_key, detail, comments)
+
+        result = await run_claude_suggest(task.jira_key)
+
+        return {
+            "jira_key": task.jira_key,
+            "summary": result.get("summary", ""),
+            "suggested_comment": result.get("suggested_comment", ""),
+            "comments_count": len(comments),
+            "error": result.get("error"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to suggest comment for task {task_id}")
+        raise HTTPException(status_code=502, detail=f"Error: {e}")
+    finally:
+        db.close()
+
+
+class PostCommentRequest(BaseModel):
+    comment: str
+
+
+@router.post("/{task_id}/post-comment")
+def post_comment(task_id: str, body: PostCommentRequest) -> dict:
+    """Post a comment to the linked Jira ticket."""
+    db = get_db()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if not task.jira_key:
+            raise HTTPException(status_code=400, detail="Task has no linked Jira ticket")
+
+        client = _get_jira_client()
+        result = client.add_comment(task.jira_key, body.comment)
+
+        return {
+            "success": True,
+            "jira_key": task.jira_key,
+            "comment_id": result.get("id"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to post comment for task {task_id}")
+        raise HTTPException(status_code=502, detail=f"Jira API error: {e}")
     finally:
         db.close()

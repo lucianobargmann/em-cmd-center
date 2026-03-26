@@ -1509,3 +1509,53 @@ body {
     color: var(--text-secondary);
     flex-shrink: 0;
 }
+
+/* ===== Comment Suggestion Panel ===== */
+.comment-textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+    resize: vertical;
+    outline: none;
+    line-height: 1.5;
+}
+
+.comment-textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0,113,227,0.2);
+}
+
+.comment-textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-send-comment {
+    padding: 6px 14px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 6px;
+    align-self: flex-start;
+}
+
+.btn-send-comment:hover { opacity: 0.9; }
+.btn-send-comment:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.comment-status {
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.comment-status.success { color: var(--green); }
+.comment-status.error { color: var(--red); }

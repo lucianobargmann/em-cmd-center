@@ -450,6 +450,70 @@ class JiraClient:
 
         return result
 
+    def get_issue_comments(self, issue_key: str) -> list[dict]:
+        """Fetch comments for a specific issue.
+
+        Args:
+            issue_key: e.g. SAOP-123.
+
+        Returns:
+            List of dicts with author, created, body (plain text).
+        """
+        try:
+            resp = self._request("GET", f"/rest/api/3/issue/{issue_key}/comment")
+            data = resp.json()
+            results = []
+            for c in data.get("comments", []):
+                # Extract plain text from ADF body
+                body_text = ""
+                body = c.get("body")
+                if body and isinstance(body, dict):
+                    for block in body.get("content", []):
+                        for inline in block.get("content", []):
+                            if inline.get("type") == "text":
+                                body_text += inline.get("text", "")
+                        body_text += "\n"
+                body_text = body_text.strip()
+
+                author = (c.get("author") or {}).get("displayName", "Unknown")
+                created = c.get("created", "")
+                results.append({"author": author, "created": created, "body": body_text})
+            return results
+        except Exception:
+            logger.warning(f"Failed to fetch comments for {issue_key}")
+            return []
+
+    def add_comment(self, issue_key: str, body_text: str) -> dict:
+        """Post a comment to a Jira issue.
+
+        Args:
+            issue_key: e.g. SAOP-123.
+            body_text: Plain text comment (converted to ADF).
+
+        Returns:
+            Dict with comment id.
+        """
+        payload = {
+            "body": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": body_text}],
+                    }
+                ],
+            }
+        }
+        resp = self._request(
+            "POST",
+            f"/rest/api/3/issue/{issue_key}/comment",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        data = resp.json()
+        return {"id": data.get("id")}
+
     def is_stale(self, issue: dict, days: int = 3) -> tuple[bool, int]:
         """Check if an in-progress issue has had no updates recently.
 
