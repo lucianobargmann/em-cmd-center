@@ -1,5 +1,6 @@
 """Daily report REST API endpoint."""
 
+import json
 import logging
 from datetime import date, datetime, timedelta
 
@@ -158,7 +159,8 @@ def daily_report(date_str: str | None = Query(None, alias="date")) -> dict:
                     icon = "\u2705"
                 else:
                     icon = "\U0001f535"
-                notes = f" — {g.progress_notes}" if g.progress_notes else ""
+                pn = json.loads(g.progress_notes) if g.progress_notes else []
+                notes = f" — {pn[0]['text']}" if pn else ""
                 lines.append(f"  {icon} {g.title}{notes}")
             lines.append("")
 

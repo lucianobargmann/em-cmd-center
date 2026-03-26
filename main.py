@@ -18,7 +18,10 @@ from api.agent import router as agent_router
 from api.agent import set_config
 from api.goals import router as goals_router
 from api.goals import set_goals_config
+from api.metrics import router as metrics_router
+from api.metrics import set_metrics_config
 from api.reports import router as reports_router
+from api.task_actions import router as task_actions_router
 from api.tasks import router as tasks_router
 from config import CONFIG
 from database import init_db
@@ -38,6 +41,7 @@ async def lifespan(app: FastAPI):
 
     set_config(CONFIG)
     set_goals_config(CONFIG)
+    set_metrics_config(CONFIG)
 
     from agent.scheduler import setup_scheduler
     scheduler = setup_scheduler(CONFIG)
@@ -59,9 +63,11 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 app.include_router(tasks_router)
+app.include_router(task_actions_router)
 app.include_router(agent_router)
 app.include_router(goals_router)
 app.include_router(reports_router)
+app.include_router(metrics_router)
 
 
 @app.get("/", response_class=HTMLResponse)

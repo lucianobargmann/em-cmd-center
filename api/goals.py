@@ -1,7 +1,8 @@
 """Goals CRUD REST API endpoints with Jira sync."""
 
+import json
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -40,7 +41,22 @@ def _get_jira_client() -> JiraClient | None:
 
 def _monday_of_week(d: date) -> date:
     """Return the Monday of the week containing date d."""
-    return d - __import__("datetime").timedelta(days=d.weekday())
+    return d - timedelta(days=d.weekday())
+
+
+def _append_progress_note(existing_json: str | None, text: str) -> str:
+    """Prepend a timestamped note to the progress notes JSON array.
+
+    Args:
+        existing_json: Current JSON string (list) or None.
+        text: New note text.
+
+    Returns:
+        Updated JSON string with new note prepended.
+    """
+    notes = json.loads(existing_json) if existing_json else []
+    notes.insert(0, {"ts": datetime.utcnow().isoformat(), "text": text})
+    return json.dumps(notes)
 
 
 # ---- Pydantic models ----
@@ -50,7 +66,7 @@ class GoalCreate(BaseModel):
     title: str
     description: str | None = None
     week_start: str | None = None  # YYYY-MM-DD, defaults to current week Monday
-    progress_notes: str | None = None
+    progress_note: str | None = None  # initial progress note
 
 
 class GoalUpdate(BaseModel):
@@ -58,7 +74,7 @@ class GoalUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     status: str | None = None  # active, completed, archived
-    progress_notes: str | None = None
+    progress_note: str | None = None  # new note to prepend
     sort_order: int | None = None
 
 
@@ -113,11 +129,15 @@ def create_goal(body: GoalCreate) -> dict:
         else:
             ws = _monday_of_week(date.today())
 
+        progress_notes = None
+        if body.progress_note:
+            progress_notes = _append_progress_note(None, body.progress_note)
+
         goal = Goal(
             title=body.title,
             description=body.description,
             week_start=ws,
-            progress_notes=body.progress_notes,
+            progress_notes=progress_notes,
         )
 
         # Sync to Jira
@@ -161,6 +181,13 @@ def update_goal(goal_id: str, body: GoalUpdate) -> dict:
             raise HTTPException(status_code=404, detail="Goal not found")
 
         update_data = body.model_dump(exclude_unset=True)
+
+        # Handle progress_note specially: prepend to list
+        new_note = update_data.pop("progress_note", None)
+        if new_note:
+            goal.progress_notes = _append_progress_note(goal.progress_notes, new_note)
+
+        # Apply remaining field updates
         for key, value in update_data.items():
             setattr(goal, key, value)
         goal.updated_at = datetime.utcnow()

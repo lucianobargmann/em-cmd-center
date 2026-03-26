@@ -5,6 +5,12 @@ let tasks = [];
 let goals = [];
 let completedCollapsed = false;
 
+// Metrics state
+let metricsData = null;
+let currentWeekStart = null;
+let developers = [];
+let activeTab = 'tasks';
+
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
     setHeaderDate();
@@ -12,8 +18,10 @@ document.addEventListener('DOMContentLoaded', () => {
     loadGoals();
     loadAgentStatus();
     setupListeners();
-    // Poll agent status every 60s
+    // Poll for updates every 60s
     setInterval(loadAgentStatus, 60000);
+    setInterval(loadTasks, 60000);
+    setInterval(loadGoals, 60000);
 });
 
 function setHeaderDate() {
@@ -66,6 +74,116 @@ function setupListeners() {
         if (e.target === e.currentTarget) e.currentTarget.classList.remove('active');
     });
     document.getElementById('btn-save-goal').addEventListener('click', saveGoal);
+
+    // Nav tabs
+    document.getElementById('nav-tabs').addEventListener('click', (e) => {
+        if (!e.target.classList.contains('nav-tab')) return;
+        const tab = e.target.dataset.tab;
+        if (tab === activeTab) return;
+        activeTab = tab;
+        document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        document.getElementById('tasks-view').style.display = tab === 'tasks' ? '' : 'none';
+        document.getElementById('metrics-view').style.display = tab === 'metrics' ? '' : 'none';
+        if (tab === 'metrics' && !metricsData) {
+            loadMetrics();
+            loadDevelopers();
+        }
+    });
+
+    // Metrics controls
+    document.getElementById('week-prev').addEventListener('click', () => navigateWeek(-1));
+    document.getElementById('week-next').addEventListener('click', () => navigateWeek(1));
+    document.getElementById('btn-collect').addEventListener('click', triggerMetricsCollection);
+    document.getElementById('btn-metrics-report').addEventListener('click', openMetricsReport);
+    document.getElementById('btn-manage-roster').addEventListener('click', openRosterModal);
+    document.getElementById('btn-empty-roster').addEventListener('click', openRosterModal);
+    document.getElementById('btn-retry-metrics').addEventListener('click', loadMetrics);
+
+    // Metrics report modal
+    document.getElementById('metrics-report-close').addEventListener('click', () => {
+        document.getElementById('metrics-report-modal').classList.remove('active');
+    });
+    document.getElementById('metrics-report-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) e.currentTarget.classList.remove('active');
+    });
+    document.getElementById('btn-copy-metrics-report').addEventListener('click', () => {
+        const text = document.getElementById('metrics-report-text').textContent;
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.getElementById('btn-copy-metrics-report');
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy to Clipboard'; }, 2000);
+        });
+    });
+
+    // Roster modal
+    document.getElementById('roster-modal-close').addEventListener('click', () => {
+        document.getElementById('roster-modal').classList.remove('active');
+    });
+    document.getElementById('roster-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) e.currentTarget.classList.remove('active');
+    });
+    document.getElementById('btn-add-dev').addEventListener('click', () => openDevEditModal(null));
+
+    // Developer edit modal
+    document.getElementById('dev-edit-modal-close').addEventListener('click', () => {
+        document.getElementById('dev-edit-modal').classList.remove('active');
+    });
+    document.getElementById('dev-edit-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) e.currentTarget.classList.remove('active');
+    });
+    document.getElementById('btn-save-dev').addEventListener('click', saveDevEdit);
+
+    // Merge button
+    document.getElementById('btn-merge-devs').addEventListener('click', mergeSelectedDevelopers);
+
+    // Jira user picker — server-side search, auto-fill name/email + BB auto-match
+    setupJiraSearchPicker(
+        document.getElementById('dev-edit-jira'),
+        document.getElementById('jira-picker-edit'),
+        document.getElementById('dev-edit-jira-id'),
+        async (u) => {
+            const nameEl = document.getElementById('dev-edit-name');
+            const emailEl = document.getElementById('dev-edit-email');
+            const bbEl = document.getElementById('dev-edit-bb');
+            if (!nameEl.value.trim()) nameEl.value = u.label;
+            if (!emailEl.value.trim() && u.email) emailEl.value = u.email;
+            // Auto-match Bitbucket user by name
+            if (!bbEl.value.trim()) {
+                try {
+                    const resp = await fetch(`/api/metrics/bitbucket-match?name=${encodeURIComponent(u.label)}`);
+                    const data = await resp.json();
+                    if (data.match) {
+                        bbEl.value = data.match.nickname;
+                        bbEl.title = `Auto-matched: ${data.match.display_name}`;
+                    }
+                } catch (e) { console.warn('BB auto-match failed:', e); }
+            }
+        }
+    );
+
+    // BB user picker — client-side filter
+    setupBBSearchPicker(document.getElementById('dev-edit-bb'), document.getElementById('bb-picker-edit'));
+
+    // Slack user picker — client-side filter
+    setupSlackSearchPicker(
+        document.getElementById('dev-edit-slack'),
+        document.getElementById('slack-picker-edit'),
+        document.getElementById('dev-edit-slack-id')
+    );
+
+    // Prevent picker clicks from closing modals
+    document.querySelectorAll('.picker-dropdown').forEach(dd => {
+        dd.addEventListener('click', (e) => e.stopPropagation());
+        dd.addEventListener('mousedown', (e) => e.stopPropagation());
+    });
+
+    // Close pickers on outside click
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.picker-wrapper')) {
+            closeAllPickers();
+        }
+    });
 }
 
 // ---- API calls ----
@@ -233,15 +351,29 @@ function renderGoals() {
         title.addEventListener('click', () => openGoalModal(g));
         row.appendChild(title);
 
-        // Progress notes (inline editable)
-        const notes = document.createElement('input');
-        notes.className = 'goal-notes-inline';
-        notes.type = 'text';
-        notes.value = g.progress_notes || '';
-        notes.placeholder = 'progress...';
-        notes.addEventListener('blur', () => updateGoalNotes(g.id, notes.value));
-        notes.addEventListener('keydown', (e) => { if (e.key === 'Enter') notes.blur(); });
-        row.appendChild(notes);
+        // Latest progress note (read-only)
+        const pn = g.progress_notes || [];
+        const latestText = document.createElement('span');
+        latestText.className = 'goal-latest-note';
+        latestText.textContent = pn.length > 0 ? pn[0].text : '';
+        latestText.title = pn.length > 1 ? `${pn.length} notes — click goal title to see all` : '';
+        row.appendChild(latestText);
+
+        // Inline add-note input
+        const noteInput = document.createElement('input');
+        noteInput.className = 'goal-notes-inline';
+        noteInput.type = 'text';
+        noteInput.value = '';
+        noteInput.placeholder = '+ note...';
+        noteInput.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                const text = noteInput.value.trim();
+                if (!text) return;
+                noteInput.value = '';
+                await addGoalNote(g.id, text);
+            }
+        });
+        row.appendChild(noteInput);
 
         // Jira link
         if (g.jira_key && g.jira_url) {
@@ -282,15 +414,16 @@ async function cycleGoalStatus(goal) {
     }
 }
 
-async function updateGoalNotes(goalId, notes) {
+async function addGoalNote(goalId, text) {
     try {
         await fetch(`/api/goals/${goalId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ progress_notes: notes }),
+            body: JSON.stringify({ progress_note: text }),
         });
+        loadGoals();
     } catch (e) {
-        console.error('Failed to update goal notes:', e);
+        console.error('Failed to add goal note:', e);
     }
 }
 
@@ -309,9 +442,36 @@ function openGoalModal(goal) {
     document.getElementById('goal-edit-id').value = goal ? goal.id : '';
     document.getElementById('goal-title-input').value = goal ? goal.title : '';
     document.getElementById('goal-desc-input').value = goal ? (goal.description || '') : '';
-    document.getElementById('goal-notes-input').value = goal ? (goal.progress_notes || '') : '';
+    document.getElementById('goal-notes-input').value = '';
+    document.getElementById('goal-notes-input').placeholder = goal ? 'Add a progress note...' : 'Initial progress note...';
+
+    // Render note history
+    const historyEl = document.getElementById('goal-notes-history');
+    historyEl.innerHTML = '';
+    if (goal && goal.progress_notes && goal.progress_notes.length > 0) {
+        for (const n of goal.progress_notes) {
+            const entry = document.createElement('div');
+            entry.className = 'note-entry';
+            const ts = new Date(n.ts);
+            const timeStr = ts.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                + ' ' + ts.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+            entry.innerHTML = `<span class="note-ts">${timeStr}</span> ${escapeHtml(n.text)}`;
+            historyEl.appendChild(entry);
+        }
+    }
+
     modal.classList.add('active');
-    document.getElementById('goal-title-input').focus();
+    if (goal) {
+        document.getElementById('goal-notes-input').focus();
+    } else {
+        document.getElementById('goal-title-input').focus();
+    }
+}
+
+function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
 }
 
 async function saveGoal() {
@@ -319,20 +479,26 @@ async function saveGoal() {
     const title = document.getElementById('goal-title-input').value.trim();
     if (!title) return;
 
-    const payload = {
-        title,
-        description: document.getElementById('goal-desc-input').value.trim() || null,
-        progress_notes: document.getElementById('goal-notes-input').value.trim() || null,
-    };
+    const noteText = document.getElementById('goal-notes-input').value.trim() || null;
 
     try {
         if (id) {
+            const payload = {
+                title,
+                description: document.getElementById('goal-desc-input').value.trim() || null,
+            };
+            if (noteText) payload.progress_note = noteText;
             await fetch(`/api/goals/${id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
         } else {
+            const payload = {
+                title,
+                description: document.getElementById('goal-desc-input').value.trim() || null,
+            };
+            if (noteText) payload.progress_note = noteText;
             await fetch('/api/goals', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -377,9 +543,9 @@ async function copyReport() {
 
 // ---- Rendering ----
 const PRIORITY_LABELS = {
-    p1: 'P1 — URGENT · DO NOW',
-    p2: 'P2 — THIS WEEK',
-    p3: 'P3 — WHEN POSSIBLE',
+    p1: 'P1 — CEO ESCALATION',
+    p2: 'P2 — COMPANY PRIORITY',
+    p3: 'P3 — THIS WEEK',
     p4: 'P4 — BACKLOG',
 };
 
@@ -500,15 +666,1053 @@ function createTaskRow(task, isDoNext) {
         row.appendChild(link);
     }
 
+    // Action buttons container
+    const actions = document.createElement('span');
+    actions.className = 'task-actions';
+
+    // AI Analysis button (only for Jira-linked tasks)
+    if (task.jira_key) {
+        const analysisBtn = document.createElement('button');
+        analysisBtn.className = 'btn-action';
+        analysisBtn.textContent = '?';
+        analysisBtn.title = 'AI Analysis';
+        analysisBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            togglePanel(task.id, 'analysis');
+        });
+        actions.appendChild(analysisBtn);
+    }
+
+    // Ranking Rationale button (all tasks)
+    const rankBtn = document.createElement('button');
+    rankBtn.className = 'btn-action';
+    rankBtn.textContent = 'i';
+    rankBtn.title = 'Ranking Rationale';
+    rankBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        togglePanel(task.id, 'ranking');
+    });
+    actions.appendChild(rankBtn);
+
+    row.appendChild(actions);
+
     // Delete button
     const del = document.createElement('button');
     del.className = 'btn-delete';
-    del.textContent = '×';
+    del.textContent = '\u00d7';
     del.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteTask(task.id);
     });
     row.appendChild(del);
 
-    return row;
+    // Wrapper to hold row + expandable panel
+    const wrapper = document.createElement('div');
+    wrapper.className = 'task-wrapper';
+    wrapper.dataset.taskId = task.id;
+    wrapper.appendChild(row);
+
+    return wrapper;
+}
+
+// ---- Detail Panels ----
+let openPanelTaskId = null;
+let openPanelType = null;
+
+function togglePanel(taskId, type) {
+    const wrapper = document.querySelector(`.task-wrapper[data-task-id="${taskId}"]`);
+    if (!wrapper) return;
+
+    const existing = wrapper.querySelector('.detail-panel');
+
+    // Close any open panel across all tasks
+    document.querySelectorAll('.detail-panel').forEach(p => p.remove());
+
+    // If same panel was open, just close it
+    if (openPanelTaskId === taskId && openPanelType === type) {
+        openPanelTaskId = null;
+        openPanelType = null;
+        return;
+    }
+
+    openPanelTaskId = taskId;
+    openPanelType = type;
+
+    const panel = document.createElement('div');
+    panel.className = 'detail-panel';
+    panel.innerHTML = '<div class="detail-loading">Loading...</div>';
+    wrapper.appendChild(panel);
+
+    if (type === 'analysis') {
+        showAnalysis(taskId, panel);
+    } else {
+        showRanking(taskId, panel);
+    }
+}
+
+async function showAnalysis(taskId, panel) {
+    try {
+        const resp = await fetch(`/api/tasks/${taskId}/analysis`);
+        if (!resp.ok) {
+            const err = await resp.json();
+            panel.innerHTML = `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
+            return;
+        }
+        const data = await resp.json();
+        const f = data.fields;
+
+        let html = '<div class="detail-content">';
+        html += `<div class="detail-summary">${escapeHtml(data.summary)}</div>`;
+
+        html += '<div class="detail-fields">';
+        html += fieldRow('Status', f.status);
+        html += fieldRow('Assignee', f.assignee || 'Unassigned');
+        html += fieldRow('Priority', f.priority);
+        html += fieldRow('Story Points', f.story_points ?? 'None');
+        html += fieldRow('Age', f.age_days != null ? `${f.age_days} days` : 'N/A');
+        html += fieldRow('Stale', f.stale_days != null ? `${f.stale_days} days since update` : 'N/A');
+        html += fieldRow('Comments', f.comments_count);
+        if (f.due_date) {
+            const src = f.due_date_source === 'fixVersion' ? ' (from fixVersion)' : '';
+            html += fieldRow('Due', f.due_date + src);
+        }
+        if (f.fix_versions && f.fix_versions.length > 0) {
+            html += fieldRow('Fix Version', f.fix_versions.join(', '));
+        }
+        if (f.blockers && f.blockers.length > 0) {
+            const blockerStr = f.blockers.map(b => `${b.key} (${b.status})`).join(', ');
+            html += fieldRow('Blockers', blockerStr);
+        }
+        html += '</div>';
+
+        if (f.description_snippet) {
+            html += `<div class="detail-desc">${escapeHtml(f.description_snippet)}</div>`;
+        }
+
+        html += '<div class="detail-actions-header">Suggested Actions</div>';
+        html += '<ul class="detail-actions-list">';
+        for (const action of data.actions) {
+            html += `<li>${escapeHtml(action)}</li>`;
+        }
+        html += '</ul>';
+        html += '</div>';
+
+        panel.innerHTML = html;
+    } catch (e) {
+        panel.innerHTML = '<div class="detail-error">Failed to load analysis</div>';
+        console.error('Analysis error:', e);
+    }
+}
+
+async function showRanking(taskId, panel) {
+    try {
+        const resp = await fetch(`/api/tasks/${taskId}/ranking`);
+        if (!resp.ok) {
+            const err = await resp.json();
+            panel.innerHTML = `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
+            return;
+        }
+        const data = await resp.json();
+        const f = data.factors;
+
+        let html = '<div class="detail-content">';
+        html += `<div class="detail-summary">${escapeHtml(data.explanation)}</div>`;
+
+        html += '<div class="detail-fields">';
+        html += fieldRow('Priority', f.priority_label);
+        html += fieldRow('Source', f.source + (f.auto ? ' (auto)' : ''));
+        html += fieldRow('Category', f.category);
+        html += fieldRow('Age', f.age_days != null ? `${f.age_days} days` : 'N/A');
+        html += fieldRow('Jira', f.has_jira_link ? (f.jira_key || 'Yes') : 'None');
+        if (f.gap_type) html += fieldRow('Gap Type', f.gap_type);
+        if (data.position) html += fieldRow('Position', `#${data.position} of ${data.open_count}`);
+        html += '</div>';
+
+        html += `<div class="detail-sort-explanation">${escapeHtml(data.sort_explanation)}</div>`;
+        html += '</div>';
+
+        panel.innerHTML = html;
+    } catch (e) {
+        panel.innerHTML = '<div class="detail-error">Failed to load ranking</div>';
+        console.error('Ranking error:', e);
+    }
+}
+
+function fieldRow(label, value) {
+    return `<div class="detail-field"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(String(value))}</span></div>`;
+}
+
+// ===== Metrics Dashboard =====
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function formatWeekLabel(isoDate) {
+    const d = new Date(isoDate + 'T00:00:00');
+    return `Week of ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
+async function loadMetrics() {
+    showMetricsState('loading');
+    const url = currentWeekStart
+        ? `/api/metrics/dashboard?week_start=${currentWeekStart}`
+        : '/api/metrics/dashboard';
+    try {
+        const resp = await fetch(url);
+        metricsData = await resp.json();
+        currentWeekStart = metricsData.week_start;
+
+        if (!metricsData.developers || metricsData.developers.length === 0) {
+            // Check if we have any developers in roster
+            if (developers.length === 0) {
+                try {
+                    const dr = await fetch('/api/metrics/developers');
+                    developers = await dr.json();
+                } catch {}
+            }
+            if (developers.length === 0) {
+                showMetricsState('empty');
+                return;
+            }
+        }
+        showMetricsState('data');
+        renderMetrics();
+    } catch (e) {
+        console.error('Failed to load metrics:', e);
+        showMetricsState('error');
+    }
+}
+
+async function loadDevelopers() {
+    try {
+        const resp = await fetch('/api/metrics/developers');
+        developers = await resp.json();
+    } catch (e) {
+        console.error('Failed to load developers:', e);
+    }
+}
+
+function showMetricsState(state) {
+    document.getElementById('metrics-loading').style.display = state === 'loading' ? '' : 'none';
+    document.getElementById('metrics-empty').style.display = state === 'empty' ? '' : 'none';
+    document.getElementById('metrics-error').style.display = state === 'error' ? '' : 'none';
+    document.getElementById('cards-grid').style.display = state === 'data' ? '' : 'none';
+}
+
+function navigateWeek(delta) {
+    if (!metricsData) return;
+    const weeks = metricsData.weeks_available || [];
+    if (weeks.length === 0) return;
+    const idx = weeks.indexOf(currentWeekStart);
+    // weeks are sorted descending (newest first)
+    const newIdx = idx - delta; // -1 = newer, +1 = older
+    if (newIdx >= 0 && newIdx < weeks.length) {
+        currentWeekStart = weeks[newIdx];
+        loadMetrics();
+    }
+}
+
+function renderMetrics() {
+    if (!metricsData) return;
+    const data = metricsData;
+
+    // Week label
+    document.getElementById('metrics-week-label').textContent = formatWeekLabel(data.week_start);
+
+    // Official metrics — All Tickets
+    const om = data.official_metrics;
+    const ctEl = document.getElementById('official-ct');
+    const ltEl = document.getElementById('official-lt');
+    ctEl.textContent = om.avg_cycle_time != null ? `${om.avg_cycle_time}d` : '--';
+    ltEl.textContent = om.avg_lead_time != null ? `${om.avg_lead_time}d` : '--';
+    document.getElementById('all-issues-count').textContent = om.all_issues_count ? `n=${om.all_issues_count}` : '';
+    appendDelta(ctEl, om.avg_cycle_time, om.prev_cycle_time, true);
+    appendDelta(ltEl, om.avg_lead_time, om.prev_lead_time, true);
+
+    // Official metrics — Roster Avg
+    const rctEl = document.getElementById('roster-ct');
+    const rltEl = document.getElementById('roster-lt');
+    rctEl.textContent = om.roster_avg_cycle_time != null ? `${om.roster_avg_cycle_time}d` : '--';
+    rltEl.textContent = om.roster_avg_lead_time != null ? `${om.roster_avg_lead_time}d` : '--';
+    document.getElementById('roster-issues-count').textContent = om.roster_issues_count ? `n=${om.roster_issues_count}` : '';
+    appendDelta(rctEl, om.roster_avg_cycle_time, om.prev_roster_cycle_time, true);
+    appendDelta(rltEl, om.roster_avg_lead_time, om.prev_roster_lead_time, true);
+
+    // Cards
+    renderBarChart('chart-lines', data.developers, 'lines_committed', 'var(--accent)');
+    renderBarChart('chart-prs', data.developers, 'pr_count', 'var(--purple)');
+    renderStackedBars('chart-tickets', data.developers, 'tickets');
+    renderStackedBars('chart-sp', data.developers, 'story_points');
+    renderRatioChart('chart-ratio', data.developers);
+    renderDefectCard('chart-defects', data.defects, data.defect_history);
+    renderEPSCard('chart-eps', data.developers);
+    renderDetailTable('detail-table-container', data.developers);
+}
+
+function appendDelta(parentEl, current, prev, lowerIsBetter) {
+    // Remove existing delta
+    const existing = parentEl.parentElement.querySelector('.metric-delta');
+    if (existing) existing.remove();
+
+    if (current == null || prev == null) return;
+    const delta = current - prev;
+    if (Math.abs(delta) < 0.05) return;
+
+    const span = document.createElement('span');
+    const arrow = delta < 0 ? '\u25BC' : '\u25B2';
+    const isGood = lowerIsBetter ? delta < 0 : delta > 0;
+    span.className = `metric-delta ${isGood ? 'good' : 'bad'}`;
+    span.textContent = `${arrow} ${Math.abs(delta).toFixed(1)}`;
+    parentEl.parentElement.appendChild(span);
+}
+
+function renderBarChart(containerId, devs, field, color) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    if (!devs || devs.length === 0) {
+        container.textContent = 'No data';
+        return;
+    }
+
+    const maxVal = Math.max(...devs.map(d => d[field] || 0), 1);
+    const chart = document.createElement('div');
+    chart.className = 'bar-chart';
+
+    for (const d of devs) {
+        const val = d[field] || 0;
+        const pct = (val / maxVal * 100).toFixed(1);
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML = `
+            <span class="bar-label">${escapeHtml(d.name)}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+            <span class="bar-value">${val.toLocaleString()}</span>
+        `;
+        chart.appendChild(row);
+    }
+    container.appendChild(chart);
+}
+
+function renderStackedBars(containerId, devs, field) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    if (!devs || devs.length === 0) { container.textContent = 'No data'; return; }
+
+    const buckets = ['todo', 'wip', 'qa', 'closed'];
+    const maxTotal = Math.max(...devs.map(d => {
+        const obj = d[field] || {};
+        return buckets.reduce((s, b) => s + (obj[b] || 0), 0);
+    }), 1);
+
+    const chart = document.createElement('div');
+    chart.className = 'stacked-bar-chart';
+
+    for (const d of devs) {
+        const obj = d[field] || {};
+        const total = buckets.reduce((s, b) => s + (obj[b] || 0), 0);
+        const row = document.createElement('div');
+        row.className = 'stacked-row';
+
+        let barHtml = `<span class="bar-label">${escapeHtml(d.name)}</span><div class="stacked-bar">`;
+        for (const b of buckets) {
+            const val = obj[b] || 0;
+            if (val === 0) continue;
+            const pct = (val / maxTotal * 100).toFixed(1);
+            barHtml += `<div class="seg seg-${b}" style="width:${pct}%"><span class="seg-label">${val}</span></div>`;
+        }
+        barHtml += `</div><span class="bar-value">${total}</span>`;
+        row.innerHTML = barHtml;
+        chart.appendChild(row);
+    }
+
+    // Legend
+    const legend = document.createElement('div');
+    legend.className = 'stacked-legend';
+    legend.innerHTML = `
+        <span class="legend-item"><span class="legend-dot" style="background:var(--text-secondary)"></span>TODO</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--blue)"></span>WIP</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span>QA</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--green)"></span>Done</span>
+    `;
+    chart.appendChild(legend);
+    container.appendChild(chart);
+}
+
+function renderRatioChart(containerId, devs) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    if (!devs || devs.length === 0) { container.textContent = 'No data'; return; }
+
+    const maxVal = Math.max(...devs.map(d => d.sp_per_day || 0), 1);
+    const chart = document.createElement('div');
+    chart.className = 'bar-chart';
+
+    for (const d of devs) {
+        const val = d.sp_per_day || 0;
+        const pct = (val / maxVal * 100).toFixed(1);
+        const row = document.createElement('div');
+        row.className = 'bar-row';
+        row.innerHTML = `
+            <span class="bar-label">${escapeHtml(d.name)}</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:var(--green)"></div></div>
+            <span class="bar-value">${val.toFixed(1)}</span>
+        `;
+        chart.appendChild(row);
+    }
+    container.appendChild(chart);
+}
+
+function renderDefectCard(containerId, defects, history) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+
+    // Summary row
+    const summary = document.createElement('div');
+    summary.className = 'defect-summary';
+
+    const stats = [
+        { label: 'Open', value: defects.total, url: defects.jira_open_url },
+        { label: 'New', value: defects.new, url: defects.jira_new_url },
+        { label: 'Closed', value: defects.closed, url: defects.jira_closed_url },
+    ];
+    for (const s of stats) {
+        if (s.url) {
+            summary.innerHTML += `<a class="defect-stat defect-stat-link" href="${escapeHtml(s.url)}" target="_blank" rel="noopener"><span class="defect-stat-value">${s.value}</span><span class="defect-stat-label">${s.label}</span></a>`;
+        } else {
+            summary.innerHTML += `<div class="defect-stat"><span class="defect-stat-value">${s.value}</span><span class="defect-stat-label">${s.label}</span></div>`;
+        }
+    }
+
+    // Trend
+    let trendArrow = '\u2014'; // em dash
+    let trendClass = 'neutral';
+    if (defects.trend === 'up') { trendArrow = '\u25B2 ' + Math.abs(defects.wow_delta); trendClass = 'bad'; }
+    else if (defects.trend === 'down') { trendArrow = '\u25BC ' + Math.abs(defects.wow_delta); trendClass = 'good'; }
+    summary.innerHTML += `<div class="defect-trend"><span class="wow-arrow ${trendClass}">${trendArrow}</span> WoW</div>`;
+
+    container.appendChild(summary);
+
+    // Stacked column chart
+    if (history && history.length > 0) {
+        const last6 = history.slice(-6);
+        const maxH = Math.max(...last6.map(w => (w.p1 || 0) + (w.p2 || 0) + (w.other || 0)), 1);
+
+        const chart = document.createElement('div');
+        chart.className = 'defect-chart';
+        chart.style.marginBottom = '20px';
+
+        const currentWs = metricsData ? metricsData.week_start : '';
+        for (const w of last6) {
+            const total = (w.p1 || 0) + (w.p2 || 0) + (w.other || 0);
+            const col = document.createElement('div');
+            col.className = 'defect-col' + (w.week_start === currentWs ? ' current' : '');
+
+            const p1h = total > 0 ? ((w.p1 || 0) / maxH * 100) : 0;
+            const p2h = total > 0 ? ((w.p2 || 0) / maxH * 100) : 0;
+            const oth = total > 0 ? ((w.other || 0) / maxH * 100) : 0;
+
+            col.innerHTML = `
+                <div class="defect-seg other" style="height:${oth}%"></div>
+                <div class="defect-seg p2" style="height:${p2h}%"></div>
+                <div class="defect-seg p1" style="height:${p1h}%"></div>
+                <span class="defect-col-label">${w.week_start.slice(5)}</span>
+            `;
+            chart.appendChild(col);
+        }
+        container.appendChild(chart);
+
+        // Legend
+        const legend = document.createElement('div');
+        legend.className = 'stacked-legend';
+        legend.innerHTML = `
+            <span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>P1</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span>P2</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--text-secondary)"></span>Other</span>
+            <span style="margin-left:auto;font-size:11px;color:var(--text-secondary)">4-wk avg: ${defects.four_week_avg}</span>
+        `;
+        container.appendChild(legend);
+    }
+}
+
+function renderEPSCard(containerId, devs) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    if (!devs || devs.length === 0) { container.textContent = 'No data'; return; }
+
+    const sorted = [...devs].sort((a, b) => (b.eps?.score || 0) - (a.eps?.score || 0));
+    const maxScore = Math.max(...sorted.map(d => d.eps?.score || 0), 1);
+
+    const list = document.createElement('div');
+    list.className = 'eps-list';
+
+    for (const d of sorted) {
+        const score = d.eps?.score || 0;
+        const label = (d.eps?.label || 'Emerging').toLowerCase();
+        const pct = (score / maxScore * 100).toFixed(1);
+        const row = document.createElement('div');
+        row.className = 'eps-row';
+        row.innerHTML = `
+            <span class="eps-name">${escapeHtml(d.name)}</span>
+            <div class="eps-bar-track"><div class="eps-bar-fill" style="width:${pct}%"></div></div>
+            <span class="eps-score-val">${score}</span>
+            <span class="eps-badge ${label}">${d.eps?.label || 'Emerging'}</span>
+        `;
+        list.appendChild(row);
+    }
+    container.appendChild(list);
+}
+
+function renderDetailTable(containerId, devs) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    if (!devs || devs.length === 0) { container.textContent = 'No data'; return; }
+
+    const table = document.createElement('table');
+    table.className = 'metrics-table';
+    table.innerHTML = `
+        <thead><tr>
+            <th>Developer</th>
+            <th>Cycle Mean</th>
+            <th>Cycle Med</th>
+            <th>Cycle P85</th>
+            <th>Lead Mean</th>
+            <th>Lead Med</th>
+            <th>Lead P85</th>
+            <th>WoW</th>
+        </tr></thead>
+    `;
+
+    const tbody = document.createElement('tbody');
+    for (const d of devs) {
+        const ct = d.cycle_time || {};
+        const lt = d.lead_time || {};
+        const wow = d.wow_cycle_time_delta;
+
+        let wowHtml = '<span class="wow-arrow neutral">\u2014</span>';
+        if (wow != null && Math.abs(wow) >= 0.05) {
+            const arrow = wow < 0 ? '\u25BC' : '\u25B2';
+            const cls = wow < 0 ? 'good' : 'bad';
+            wowHtml = `<span class="wow-arrow ${cls}">${arrow} ${Math.abs(wow).toFixed(1)}</span>`;
+        }
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${escapeHtml(d.name)}</td>
+            <td>${ct.mean != null ? ct.mean + 'd' : '--'}</td>
+            <td>${ct.median != null ? ct.median + 'd' : '--'}</td>
+            <td>${ct.p85 != null ? ct.p85 + 'd' : '--'}</td>
+            <td>${lt.mean != null ? lt.mean + 'd' : '--'}</td>
+            <td>${lt.median != null ? lt.median + 'd' : '--'}</td>
+            <td>${lt.p85 != null ? lt.p85 + 'd' : '--'}</td>
+            <td>${wowHtml}</td>
+        `;
+        tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    container.appendChild(table);
+}
+
+// ---- Metrics Collection ----
+async function triggerMetricsCollection() {
+    const btn = document.getElementById('btn-collect');
+    btn.classList.add('spinning');
+
+    try {
+        const resp = await fetch('/api/metrics/collect', { method: 'POST' });
+        const data = await resp.json();
+        const jobId = data.job_id;
+
+        const poll = setInterval(async () => {
+            try {
+                const r = await fetch(`/api/metrics/collect/${jobId}`);
+                const s = await r.json();
+                if (s.status === 'done' || s.status === 'error') {
+                    clearInterval(poll);
+                    btn.classList.remove('spinning');
+                    if (s.status === 'error') {
+                        console.error('Metrics collection error:', s.error);
+                    }
+                    loadMetrics();
+                }
+            } catch {
+                clearInterval(poll);
+                btn.classList.remove('spinning');
+            }
+        }, 3000);
+    } catch (e) {
+        btn.classList.remove('spinning');
+        console.error('Failed to trigger metrics collection:', e);
+    }
+}
+
+// ---- Metrics Report ----
+async function openMetricsReport() {
+    const modal = document.getElementById('metrics-report-modal');
+    const textEl = document.getElementById('metrics-report-text');
+    textEl.textContent = 'Loading...';
+    modal.classList.add('active');
+
+    const url = currentWeekStart
+        ? `/api/metrics/report?week_start=${currentWeekStart}`
+        : '/api/metrics/report';
+    try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        textEl.textContent = data.text;
+    } catch (e) {
+        textEl.textContent = 'Failed to load report.';
+        console.error('Failed to load metrics report:', e);
+    }
+}
+
+// ---- Unestimated Tickets ----
+
+async function showUnestimated() {
+    const modal = document.getElementById('unestimated-modal');
+    const body = document.getElementById('unestimated-body');
+    body.innerHTML = '<div class="picker-loading">Loading tickets without story points...</div>';
+    modal.classList.add('active');
+
+    try {
+        const resp = await fetch('/api/metrics/unestimated');
+        const data = await resp.json();
+
+        const jiraLink = document.getElementById('unestimated-jira-link');
+        if (data.jira_url) {
+            jiraLink.href = data.jira_url;
+            jiraLink.style.display = '';
+        } else {
+            jiraLink.style.display = 'none';
+        }
+
+        if (!data.by_assignee || data.total === 0) {
+            body.innerHTML = '<p style="color:var(--text-secondary)">All tickets have story points!</p>';
+            return;
+        }
+
+        let html = `<p style="margin:0 0 12px;font-size:14px;color:var(--text-secondary)">${data.total} unestimated tickets</p>`;
+        const jiraBase = data.jira_url ? data.jira_url.split('/issues/')[0] : '';
+        for (const [assignee, tickets] of Object.entries(data.by_assignee)) {
+            html += `<div class="unest-group">`;
+            html += `<div class="unest-assignee">${escapeHtml(assignee)} <span class="unest-count">(${tickets.length})</span></div>`;
+            for (const t of tickets) {
+                const href = jiraBase ? `${jiraBase}/browse/${t.key}` : '#';
+                html += `<a class="unest-ticket" href="${href}" target="_blank" rel="noopener">`;
+                html += `<span class="unest-key">${escapeHtml(t.key)}</span>`;
+                html += `<span class="unest-summary">${escapeHtml(t.summary)}</span>`;
+                html += `<span class="unest-status">${escapeHtml(t.status)}</span>`;
+                html += `</a>`;
+            }
+            html += `</div>`;
+        }
+        body.innerHTML = html;
+    } catch (e) {
+        body.innerHTML = '<p style="color:var(--red)">Failed to load unestimated tickets.</p>';
+        console.error('Failed to load unestimated tickets:', e);
+    }
+}
+
+function closeUnestimatedModal() {
+    document.getElementById('unestimated-modal').classList.remove('active');
+}
+
+// ---- User Pickers (Jira / Bitbucket) ----
+let bbUsersCache = null;
+let slackUsersCache = null;
+let jiraSearchTimer = null;
+
+async function searchJiraUsers(query) {
+    try {
+        const resp = await fetch(`/api/metrics/jira-users?query=${encodeURIComponent(query)}`);
+        return await resp.json();
+    } catch { return []; }
+}
+
+async function fetchBBUsers() {
+    if (bbUsersCache) return bbUsersCache;
+    try {
+        const resp = await fetch('/api/metrics/bitbucket-users');
+        bbUsersCache = await resp.json();
+        return bbUsersCache;
+    } catch { return []; }
+}
+
+async function fetchSlackUsers() {
+    if (slackUsersCache) return slackUsersCache;
+    try {
+        const resp = await fetch('/api/metrics/slack-users');
+        slackUsersCache = await resp.json();
+        return slackUsersCache;
+    } catch { return []; }
+}
+
+function setupSlackSearchPicker(inputEl, dropdownEl, hiddenIdEl) {
+    inputEl.addEventListener('input', async () => {
+        const q = inputEl.value.trim().toLowerCase();
+        if (q.length < 1) { dropdownEl.classList.remove('open'); return; }
+        dropdownEl.innerHTML = '<div class="picker-loading">Searching...</div>';
+        dropdownEl.classList.add('open');
+        const users = await fetchSlackUsers();
+        const items = users
+            .filter(u => (u.real_name || '').toLowerCase().includes(q) || (u.display_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q))
+            .map(u => ({ label: u.real_name || u.display_name, sub: u.email || u.id, value: u.id }));
+        renderPickerList(dropdownEl, items, inputEl, hiddenIdEl);
+    });
+}
+
+function renderPickerList(dropdownEl, items, inputEl, hiddenIdEl, onSelect) {
+    dropdownEl.innerHTML = '';
+    if (items.length === 0) {
+        dropdownEl.innerHTML = '<div class="picker-loading">No matches</div>';
+        dropdownEl.classList.add('open');
+        return;
+    }
+    for (const u of items) {
+        const item = document.createElement('div');
+        item.className = 'picker-item';
+        item.innerHTML = `<span class="picker-main">${escapeHtml(u.label)}</span><span class="picker-sub">${escapeHtml(u.sub)}</span>`;
+        item.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            inputEl.value = u.label;
+            if (hiddenIdEl) hiddenIdEl.value = u.value;
+            // Delay closing so click doesn't bleed through to modal overlay
+            setTimeout(() => dropdownEl.classList.remove('open'), 50);
+            if (onSelect) onSelect(u);
+        });
+        dropdownEl.appendChild(item);
+    }
+    dropdownEl.classList.add('open');
+}
+
+function setupJiraSearchPicker(inputEl, dropdownEl, hiddenIdEl, onSelect) {
+    inputEl.addEventListener('input', () => {
+        const q = inputEl.value.trim();
+        if (hiddenIdEl) hiddenIdEl.value = '';
+        if (q.length < 2) { dropdownEl.classList.remove('open'); return; }
+        dropdownEl.innerHTML = '<div class="picker-loading">Searching...</div>';
+        dropdownEl.classList.add('open');
+        clearTimeout(jiraSearchTimer);
+        jiraSearchTimer = setTimeout(async () => {
+            const users = await searchJiraUsers(q);
+            const items = users.map(u => ({
+                label: u.displayName,
+                sub: u.emailAddress || u.accountId,
+                value: u.accountId,
+                email: u.emailAddress || '',
+            }));
+            renderPickerList(dropdownEl, items, inputEl, hiddenIdEl, onSelect);
+        }, 300);
+    });
+}
+
+function setupBBSearchPicker(inputEl, dropdownEl) {
+    inputEl.addEventListener('input', async () => {
+        const q = inputEl.value.trim().toLowerCase();
+        if (q.length < 1) { dropdownEl.classList.remove('open'); return; }
+        dropdownEl.innerHTML = '<div class="picker-loading">Searching...</div>';
+        dropdownEl.classList.add('open');
+        const users = await fetchBBUsers();
+        const items = users
+            .filter(u => u.display_name.toLowerCase().includes(q) || u.nickname.toLowerCase().includes(q))
+            .map(u => ({ label: u.display_name, sub: u.nickname, value: u.nickname }));
+        renderPickerList(dropdownEl, items, inputEl, null);
+    });
+}
+
+function closeAllPickers() {
+    document.querySelectorAll('.picker-dropdown').forEach(d => d.classList.remove('open'));
+}
+
+// ---- Merge Developers ----
+let mergeSelected = new Set();
+
+function updateMergeButton() {
+    const btn = document.getElementById('btn-merge-devs');
+    btn.style.display = mergeSelected.size >= 2 ? '' : 'none';
+    btn.textContent = `Merge (${mergeSelected.size})`;
+}
+
+function toggleMergeSelect(devId) {
+    if (mergeSelected.has(devId)) mergeSelected.delete(devId);
+    else mergeSelected.add(devId);
+    updateMergeButton();
+    renderRoster();
+}
+
+async function mergeSelectedDevelopers() {
+    if (mergeSelected.size < 2) return;
+    const ids = [...mergeSelected];
+    // First selected is the keeper
+    const keepId = ids[0];
+    const mergeIds = ids.slice(1);
+    const keeperDev = developers.find(d => d.id === keepId);
+    if (!confirm(`Merge ${mergeIds.length} developer(s) into "${keeperDev?.display_name || 'Unknown'}"? The first checked row becomes the keeper.`)) return;
+
+    try {
+        const resp = await fetch('/api/metrics/developers/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keep_id: keepId, merge_ids: mergeIds }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert(err.detail || 'Merge failed');
+            return;
+        }
+        mergeSelected.clear();
+        updateMergeButton();
+        await loadDevelopers();
+        renderRoster();
+    } catch (e) {
+        console.error('Merge failed:', e);
+    }
+}
+
+// ---- Developer Roster ----
+function openRosterModal() {
+    const modal = document.getElementById('roster-modal');
+    modal.classList.add('active');
+    mergeSelected.clear();
+    updateMergeButton();
+    renderRoster();
+}
+
+async function bulkAutomatchBB() {
+    const btn = document.getElementById('btn-automatch-bb');
+    btn.disabled = true;
+    btn.textContent = 'Matching...';
+    try {
+        const resp = await fetch('/api/metrics/bitbucket-automatch', { method: 'POST' });
+        const data = await resp.json();
+        if (data.matched > 0) {
+            await loadDevelopers();
+            renderRoster();
+            alert(`Matched ${data.matched} of ${data.total} developers:\n\n` +
+                data.results.filter(r => r.bb_match).map(r => `${r.developer} → ${r.bb_match}`).join('\n'));
+        } else {
+            const unmatched = data.results.filter(r => !r.bb_match).map(r => r.developer);
+            if (unmatched.length === 0) {
+                alert('All developers already have Bitbucket usernames.');
+            } else {
+                alert(`No matches found for:\n${unmatched.join('\n')}`);
+            }
+        }
+    } catch (e) {
+        console.error('BB auto-match failed:', e);
+        alert('Failed to auto-match Bitbucket users.');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Auto-match BB';
+    }
+}
+
+async function bulkAutomatchSlack() {
+    const btn = document.getElementById('btn-automatch-slack');
+    btn.disabled = true;
+    btn.textContent = 'Matching...';
+    try {
+        const resp = await fetch('/api/metrics/slack-automatch', { method: 'POST' });
+        const data = await resp.json();
+        if (data.matched > 0) {
+            await loadDevelopers();
+            renderRoster();
+            alert(`Matched ${data.matched} of ${data.total} developers:\n\n` +
+                data.results.filter(r => r.slack_match).map(r => `${r.developer} → ${r.slack_match}`).join('\n'));
+        } else {
+            const unmatched = data.results.filter(r => !r.slack_match).map(r => r.developer);
+            if (unmatched.length === 0) {
+                alert('All developers already have Slack user IDs.');
+            } else {
+                alert(`No matches found for:\n${unmatched.join('\n')}`);
+            }
+        }
+    } catch (e) {
+        console.error('Slack auto-match failed:', e);
+        alert('Failed to auto-match Slack users.');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Auto-match Slack';
+    }
+}
+
+async function sendSlackReminders() {
+    const btn = document.getElementById('btn-slack-remind');
+    if (!confirm('Send Slack DM reminders to developers with unestimated tickets?')) return;
+    btn.disabled = true;
+    const origText = btn.textContent;
+    btn.textContent = 'Sending...';
+    try {
+        const resp = await fetch('/api/metrics/slack-remind', { method: 'POST' });
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert(err.detail || 'Failed to trigger reminders');
+            return;
+        }
+        const { job_id } = await resp.json();
+
+        // Poll for completion
+        let status = 'pending';
+        let result = null;
+        while (status === 'pending' || status === 'running') {
+            await new Promise(r => setTimeout(r, 1000));
+            const pollResp = await fetch(`/api/metrics/slack-remind/${job_id}`);
+            const pollData = await pollResp.json();
+            status = pollData.status;
+            result = pollData.result || null;
+            if (pollData.error) {
+                alert(`Error: ${pollData.error}`);
+                return;
+            }
+        }
+
+        if (result) {
+            const msg = `Sent: ${result.sent} | Skipped (0 unestimated): ${result.skipped}` +
+                (result.errors.length ? `\nErrors: ${result.errors.join(', ')}` : '');
+            alert(msg);
+        }
+    } catch (e) {
+        console.error('Slack remind failed:', e);
+        alert('Failed to send Slack reminders.');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+    }
+}
+
+function renderRoster() {
+    const list = document.getElementById('roster-list');
+    list.innerHTML = '';
+
+    if (developers.length === 0) {
+        list.innerHTML = '<p style="color:var(--text-secondary);font-size:13px">No developers yet.</p>';
+        return;
+    }
+
+    const keeperId = mergeSelected.size > 0 ? [...mergeSelected][0] : null;
+
+    for (const d of developers) {
+        const row = document.createElement('div');
+        row.className = 'roster-row';
+
+        // Merge checkbox
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'roster-checkbox';
+        cb.checked = mergeSelected.has(d.id);
+        cb.addEventListener('change', () => toggleMergeSelect(d.id));
+        row.appendChild(cb);
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'roster-name';
+        nameSpan.textContent = d.display_name;
+        row.appendChild(nameSpan);
+
+        // Keeper label
+        if (d.id === keeperId && mergeSelected.size >= 2) {
+            const kl = document.createElement('span');
+            kl.className = 'merge-keeper-label';
+            kl.textContent = 'keeper';
+            row.appendChild(kl);
+        }
+
+        const emailSpan = document.createElement('span');
+        emailSpan.className = 'roster-email';
+        emailSpan.textContent = d.email;
+        row.appendChild(emailSpan);
+
+        const idsSpan = document.createElement('span');
+        idsSpan.className = 'roster-ids';
+        idsSpan.textContent = [d.jira_account_id ? 'Jira' : '', d.bitbucket_username ? 'BB' : '', d.slack_user_id ? 'Slack' : ''].filter(Boolean).join(' ');
+        row.appendChild(idsSpan);
+
+        const editBtn = document.createElement('button');
+        editBtn.className = 'btn-action';
+        editBtn.textContent = '\u270E';
+        editBtn.title = 'Edit';
+        editBtn.style.opacity = '1';
+        editBtn.addEventListener('click', () => openDevEditModal(d));
+        row.appendChild(editBtn);
+
+        const del = document.createElement('button');
+        del.className = 'btn-delete';
+        del.textContent = '\u00d7';
+        del.style.opacity = '1';
+        del.addEventListener('click', () => removeDeveloper(d.id));
+        row.appendChild(del);
+        list.appendChild(row);
+    }
+}
+
+function openDevEditModal(dev) {
+    const isNew = !dev;
+    document.getElementById('dev-edit-id').value = dev ? dev.id : '';
+    document.getElementById('dev-edit-name').value = dev ? dev.display_name : '';
+    document.getElementById('dev-edit-email').value = dev ? dev.email : '';
+    document.getElementById('dev-edit-jira').value = dev ? dev.jira_account_id || '' : '';
+    document.getElementById('dev-edit-jira-id').value = dev ? dev.jira_account_id || '' : '';
+    document.getElementById('dev-edit-bb').value = dev ? dev.bitbucket_username || '' : '';
+    document.getElementById('dev-edit-slack').value = dev ? dev.slack_user_id || '' : '';
+    document.getElementById('dev-edit-slack-id').value = dev ? dev.slack_user_id || '' : '';
+    document.getElementById('dev-edit-team').value = dev ? dev.team || 'engineering' : 'engineering';
+    document.getElementById('dev-edit-role').value = dev ? dev.role || 'Engineer' : 'Engineer';
+    document.querySelector('#dev-edit-modal .modal-title').textContent = isNew ? 'Add Developer' : 'Edit Developer';
+    document.getElementById('btn-save-dev').textContent = isNew ? 'Add' : 'Save';
+    document.getElementById('dev-edit-modal').classList.add('active');
+    document.getElementById('dev-edit-jira').focus();
+}
+
+async function saveDevEdit() {
+    const id = document.getElementById('dev-edit-id').value;
+    const jiraHidden = document.getElementById('dev-edit-jira-id').value.trim();
+    const jiraVisible = document.getElementById('dev-edit-jira').value.trim();
+    const slackHidden = document.getElementById('dev-edit-slack-id').value.trim();
+    const slackVisible = document.getElementById('dev-edit-slack').value.trim();
+    const payload = {
+        display_name: document.getElementById('dev-edit-name').value.trim(),
+        email: document.getElementById('dev-edit-email').value.trim(),
+        jira_account_id: jiraHidden || jiraVisible || null,
+        bitbucket_username: document.getElementById('dev-edit-bb').value.trim() || null,
+        slack_user_id: slackHidden || slackVisible || null,
+        team: document.getElementById('dev-edit-team').value.trim() || 'engineering',
+        role: document.getElementById('dev-edit-role').value.trim() || 'Engineer',
+    };
+    if (!payload.display_name || !payload.email) return;
+
+    try {
+        if (id) {
+            // Update existing
+            await fetch(`/api/metrics/developers/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+        } else {
+            // Create new
+            const resp = await fetch('/api/metrics/developers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (resp.status === 409) {
+                alert('A developer with this email already exists.');
+                return;
+            }
+        }
+        document.getElementById('dev-edit-modal').classList.remove('active');
+        await loadDevelopers();
+        renderRoster();
+    } catch (e) {
+        console.error('Failed to save developer:', e);
+    }
+}
+
+
+async function removeDeveloper(devId) {
+    try {
+        await fetch(`/api/metrics/developers/${devId}`, { method: 'DELETE' });
+        await loadDevelopers();
+        renderRoster();
+    } catch (e) {
+        console.error('Failed to remove developer:', e);
+    }
 }

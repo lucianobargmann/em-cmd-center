@@ -97,7 +97,7 @@ def run_infra_cost_check(cloud_provider: str) -> dict:
                 if not existing:
                     task = Task(
                         title=title,
-                        priority="p2",
+                        priority="p3",
                         category="infra",
                         auto=True,
                         source="infra",

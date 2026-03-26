@@ -277,6 +277,179 @@ class JiraClient:
                     )
                     break
 
+    def get_issue_detail(self, issue_key: str) -> dict:
+        """Fetch a single issue with rich fields for analysis.
+
+        Args:
+            issue_key: e.g. SAOP-123.
+
+        Returns:
+            Flat dict of relevant fields.
+        """
+        fields = [
+            "summary", "status", "assignee", "priority",
+            "customfield_10016",  # story points
+            "description", "duedate", "created", "updated",
+            "issuelinks", "comment", "fixVersions",
+        ]
+        resp = self._request(
+            "GET",
+            f"/rest/api/3/issue/{issue_key}",
+            params={"fields": ",".join(fields)},
+        )
+        data = resp.json()
+        f = data.get("fields", {})
+
+        # Extract description plain text from ADF
+        desc_text = ""
+        desc = f.get("description")
+        if desc and isinstance(desc, dict):
+            for block in desc.get("content", []):
+                for inline in block.get("content", []):
+                    if inline.get("type") == "text":
+                        desc_text += inline.get("text", "")
+                desc_text += "\n"
+        desc_text = desc_text.strip()
+
+        # Count comments
+        comment_data = f.get("comment", {})
+        comments_count = comment_data.get("total", 0) if isinstance(comment_data, dict) else 0
+
+        # Extract blockers from issue links
+        blockers = []
+        for link in f.get("issuelinks", []):
+            link_type = link.get("type", {}).get("inward", "")
+            if "block" in link_type.lower():
+                inward = link.get("inwardIssue", {})
+                if inward:
+                    blockers.append({
+                        "key": inward.get("key"),
+                        "summary": inward.get("fields", {}).get("summary", ""),
+                        "status": inward.get("fields", {}).get("status", {}).get("name", ""),
+                    })
+
+        # Extract fixVersions and earliest release date
+        fix_versions = []
+        release_date = None
+        for v in f.get("fixVersions", []):
+            fix_versions.append(v.get("name", ""))
+            rd = v.get("releaseDate")
+            if rd and (release_date is None or rd < release_date):
+                release_date = rd
+
+        # Use due date if set, otherwise fall back to fixVersion release date
+        due_date = f.get("duedate") or release_date
+
+        return {
+            "key": data.get("key"),
+            "summary": f.get("summary", ""),
+            "status": (f.get("status") or {}).get("name", ""),
+            "assignee": (f.get("assignee") or {}).get("displayName", None),
+            "priority": (f.get("priority") or {}).get("name", ""),
+            "story_points": f.get("customfield_10016"),
+            "description_snippet": desc_text[:300] if desc_text else None,
+            "due_date": due_date,
+            "due_date_source": "duedate" if f.get("duedate") else ("fixVersion" if release_date else None),
+            "fix_versions": fix_versions,
+            "created": f.get("created"),
+            "updated": f.get("updated"),
+            "comments_count": comments_count,
+            "blockers": blockers,
+        }
+
+    def get_tickets_by_assignees(self, projects: list[str], account_ids: list[str]) -> list[dict]:
+        """Fetch all tickets assigned to specific account IDs across projects.
+
+        Args:
+            projects: List of Jira project keys.
+            account_ids: List of Jira account IDs.
+
+        Returns:
+            List of issue dicts.
+        """
+        if not account_ids:
+            return []
+        proj_str = ", ".join(projects)
+        ids_str = ", ".join(f'"{aid}"' for aid in account_ids)
+        jql = f"project in ({proj_str}) AND assignee in ({ids_str}) ORDER BY status ASC"
+        fields = ["summary", "status", "assignee", "customfield_10016", "labels"]
+        return self.search_issues(jql, fields)
+
+    def get_tickets_by_assignees_active(self, projects: list[str], account_ids: list[str]) -> list[dict]:
+        """Fetch non-resolved tickets assigned to specific account IDs.
+
+        Args:
+            projects: List of Jira project keys.
+            account_ids: List of Jira account IDs.
+
+        Returns:
+            List of issue dicts (only open/in-progress/qa tickets).
+        """
+        if not account_ids:
+            return []
+        proj_str = ", ".join(projects)
+        ids_str = ", ".join(f'"{aid}"' for aid in account_ids)
+        jql = (
+            f"project in ({proj_str}) AND assignee in ({ids_str}) "
+            f"AND resolution = Unresolved ORDER BY status ASC"
+        )
+        fields = ["summary", "status", "assignee", "customfield_10016", "labels"]
+        return self.search_issues(jql, fields)
+
+    def get_resolved_in_range(self, projects: list[str], since: str, until: str) -> list[dict]:
+        """Fetch tickets resolved within a date range.
+
+        Args:
+            projects: List of Jira project keys.
+            since: Start date YYYY-MM-DD.
+            until: End date YYYY-MM-DD.
+
+        Returns:
+            List of issue dicts with resolution fields.
+        """
+        proj_str = ", ".join(projects)
+        jql = (
+            f'project in ({proj_str}) AND resolved >= "{since}" '
+            f'AND resolved <= "{until}" ORDER BY resolved DESC'
+        )
+        fields = [
+            "summary", "status", "assignee", "customfield_10016",
+            "resolutiondate", "created", "labels", "issuetype",
+        ]
+        return self.search_issues(jql, fields)
+
+    def get_defects(
+        self, projects: list[str], created_since: str | None = None, resolved_since: str | None = None
+    ) -> dict:
+        """Query defect (Bug) counts from Jira.
+
+        Args:
+            projects: List of Jira project keys.
+            created_since: YYYY-MM-DD to filter new bugs.
+            resolved_since: YYYY-MM-DD to filter resolved bugs.
+
+        Returns:
+            Dict with 'open', 'new', 'closed' lists of issues.
+        """
+        proj_str = ", ".join(projects)
+        result: dict = {"open": [], "new": [], "closed": []}
+
+        # All open bugs
+        jql_open = f"project in ({proj_str}) AND type = Bug AND resolution = Unresolved"
+        result["open"] = self.search_issues(jql_open, ["summary", "labels", "priority", "assignee"])
+
+        # New bugs this week
+        if created_since:
+            jql_new = f'project in ({proj_str}) AND type = Bug AND created >= "{created_since}"'
+            result["new"] = self.search_issues(jql_new, ["summary", "labels", "priority"])
+
+        # Closed bugs this week
+        if resolved_since:
+            jql_closed = f'project in ({proj_str}) AND type = Bug AND resolved >= "{resolved_since}"'
+            result["closed"] = self.search_issues(jql_closed, ["summary", "labels", "priority"])
+
+        return result
+
     def is_stale(self, issue: dict, days: int = 3) -> tuple[bool, int]:
         """Check if an in-progress issue has had no updates recently.
 

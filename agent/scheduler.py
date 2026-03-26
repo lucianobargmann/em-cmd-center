@@ -10,9 +10,10 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from agent.daily_tasks import create_daily_tasks
-from agent.gap_detection import run_gap_detection
+from agent.gap_detection import run_gap_detection, sync_priority_labels
 from agent.infra_costs import run_infra_cost_check
 from agent.jira_client import JiraClient
+from agent.metrics_collector import collect_weekly_metrics
 from agent.stack_rank import run_stack_rank
 from database import get_db
 from models import AgentRun
@@ -60,6 +61,16 @@ def _run_full_agent(config: dict) -> None:
         logger.error(f"Gap detection job failed: {e}")
 
     try:
+        client = JiraClient(
+            config["JIRA_BASE_URL"],
+            config["JIRA_EMAIL"],
+            config["JIRA_API_TOKEN"],
+        )
+        sync_priority_labels(client, config["JIRA_TEAM_PROJECTS"], config["JIRA_BASE_URL"])
+    except Exception as e:
+        logger.error(f"Priority label sync failed: {e}")
+
+    try:
         create_daily_tasks()
     except Exception as e:
         logger.error(f"Daily tasks job failed: {e}")
@@ -92,7 +103,7 @@ def _run_velocity_summary(config: dict) -> None:
         from models import Task
         task = Task(
             title="Delivery summary ready — review before sending report",
-            priority="p2",
+            priority="p3",
             category="reports",
             auto=True,
             source="jira_recurring",
@@ -138,6 +149,23 @@ def _run_infra_costs(config: dict) -> None:
         run_infra_cost_check(config.get("CLOUD_PROVIDER", ""))
     except Exception as e:
         logger.error(f"Infra cost job failed: {e}")
+
+
+def _run_weekly_metrics(config: dict) -> None:
+    """Run the weekly developer metrics collection job."""
+    try:
+        collect_weekly_metrics(config)
+    except Exception as e:
+        logger.error(f"Weekly metrics collection failed: {e}")
+
+
+def _run_slack_sp_reminders(config: dict) -> None:
+    """Run the Slack story point reminder job."""
+    try:
+        from agent.slack_reminders import send_sp_reminders
+        send_sp_reminders(config)
+    except Exception as e:
+        logger.error(f"Slack SP reminder job failed: {e}")
 
 
 def start_manual_run(config: dict) -> str:
@@ -248,6 +276,27 @@ def setup_scheduler(config: dict) -> BackgroundScheduler:
             args=[config],
             id="infra_costs",
             name="Infra cost check",
+        )
+
+    # Weekly developer metrics (Monday 07:00 by default)
+    metrics_cron = _parse_cron(config.get("METRICS_COLLECTION_CRON", "0 7 * * 1"))
+    scheduler.add_job(
+        _run_weekly_metrics,
+        CronTrigger(**metrics_cron),
+        args=[config],
+        id="weekly_metrics",
+        name="Weekly developer metrics",
+    )
+
+    # Slack SP reminders (weekdays 8am by default, only if token set)
+    if config.get("SLACK_BOT_TOKEN"):
+        slack_cron = _parse_cron(config.get("SLACK_REMINDER_CRON", "0 8 * * 1-5"))
+        scheduler.add_job(
+            _run_slack_sp_reminders,
+            CronTrigger(**slack_cron),
+            args=[config],
+            id="slack_sp_reminder",
+            name="Slack SP reminder DMs",
         )
 
     scheduler.start()

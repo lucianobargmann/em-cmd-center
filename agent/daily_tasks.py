@@ -9,26 +9,26 @@ from models import AgentRun, Task
 logger = logging.getLogger(__name__)
 
 DAILY_TASKS = [
-    {"title": "Email triage — process Outlook inbox", "pri": "p1", "cat": "email"},
-    {"title": "Standup review — check async updates, identify blockers", "pri": "p2", "cat": "people"},
-    {"title": "Ticket hygiene — check for new gaps since yesterday", "pri": "p2", "cat": "delivery"},
+    {"title": "Email triage — process Outlook inbox", "pri": "p3", "cat": "email"},
+    {"title": "Standup review — check async updates, identify blockers", "pri": "p3", "cat": "people"},
+    {"title": "Ticket hygiene — check for new gaps since yesterday", "pri": "p3", "cat": "delivery"},
     {"title": "End-of-day note — what moved, what is at risk", "pri": "p4", "cat": "other"},
 ]
 
 MONDAY_EXTRAS = [
-    {"title": "Sprint kickoff review — all tickets need assignee, SP, AC", "pri": "p1", "cat": "delivery"},
-    {"title": "Automation brief review — read Jira gap detection report", "pri": "p1", "cat": "delivery"},
+    {"title": "Sprint kickoff review — all tickets need assignee, SP, AC", "pri": "p3", "cat": "delivery"},
+    {"title": "Automation brief review — read Jira gap detection report", "pri": "p3", "cat": "delivery"},
 ]
 
 WEDNESDAY_EXTRAS = [
-    {"title": "Mid-sprint health check — flag at-risk tickets now", "pri": "p1", "cat": "delivery"},
-    {"title": "Hiring pipeline review — CV shortlist and interview schedule", "pri": "p2", "cat": "hiring"},
+    {"title": "Mid-sprint health check — flag at-risk tickets now", "pri": "p3", "cat": "delivery"},
+    {"title": "Hiring pipeline review — CV shortlist and interview schedule", "pri": "p3", "cat": "hiring"},
 ]
 
 FRIDAY_EXTRAS = [
-    {"title": "Stack rank review — check trends, note 1:1 talking points", "pri": "p1", "cat": "reports"},
-    {"title": "Leadership report — finalize and send by 15:00", "pri": "p1", "cat": "reports"},
-    {"title": "Infra cost check — approve optimization recommendations", "pri": "p2", "cat": "infra"},
+    {"title": "Stack rank review — check trends, note 1:1 talking points", "pri": "p3", "cat": "reports"},
+    {"title": "Leadership report — finalize and send by 15:00", "pri": "p3", "cat": "reports"},
+    {"title": "Infra cost check — approve optimization recommendations", "pri": "p3", "cat": "infra"},
     {"title": "Sprint retro note — one improvement item in Jira", "pri": "p3", "cat": "delivery"},
 ]
 

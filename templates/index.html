@@ -17,54 +17,162 @@
             <div class="header-right">
                 <span class="progress-pill" id="progress-pill">0/0 done</span>
                 <button class="btn-report" id="btn-report" title="Daily report">Report</button>
-                <button class="btn-refresh" id="btn-refresh" title="Trigger Jira poll">↻</button>
+                <button class="btn-refresh" id="btn-refresh" title="Trigger Jira poll">&#8635;</button>
             </div>
         </header>
 
-        <!-- Add task -->
-        <div class="add-task-bar">
-            <input type="text" id="task-input" placeholder="Add a task..." autocomplete="off">
-            <select id="priority-select">
-                <option value="p1">P1</option>
-                <option value="p2" selected>P2</option>
-                <option value="p3">P3</option>
-                <option value="p4">P4</option>
-            </select>
-            <select id="category-select">
-                <option value="delivery">delivery</option>
-                <option value="people">people</option>
-                <option value="hiring">hiring</option>
-                <option value="reports">reports</option>
-                <option value="infra">infra</option>
-                <option value="email">email</option>
-                <option value="other" selected>other</option>
-            </select>
-            <button class="btn-add" id="btn-add">+ Add</button>
+        <!-- Nav tabs -->
+        <div class="nav-tabs" id="nav-tabs">
+            <button class="nav-tab active" data-tab="tasks">Tasks</button>
+            <button class="nav-tab" data-tab="metrics">Metrics</button>
         </div>
 
-        <!-- Goals section -->
-        <div class="goals-section" id="goals-section">
-            <div class="goals-header">
-                <span class="goals-week-label" id="goals-week-label">CTO Goals</span>
-                <button class="btn-add-goal" id="btn-add-goal">+ Goal</button>
+        <!-- ===== Tasks View ===== -->
+        <div id="tasks-view">
+            <!-- Add task -->
+            <div class="add-task-bar">
+                <input type="text" id="task-input" placeholder="Add a task..." autocomplete="off">
+                <select id="priority-select">
+                    <option value="p1">P1</option>
+                    <option value="p2" selected>P2</option>
+                    <option value="p3">P3</option>
+                    <option value="p4">P4</option>
+                </select>
+                <select id="category-select">
+                    <option value="delivery">delivery</option>
+                    <option value="people">people</option>
+                    <option value="hiring">hiring</option>
+                    <option value="reports">reports</option>
+                    <option value="infra">infra</option>
+                    <option value="email">email</option>
+                    <option value="other" selected>other</option>
+                </select>
+                <button class="btn-add" id="btn-add">+ Add</button>
             </div>
-            <div class="goals-list" id="goals-list"></div>
+
+            <!-- Goals section -->
+            <div class="goals-section" id="goals-section">
+                <div class="goals-header">
+                    <span class="goals-week-label" id="goals-week-label">CTO Goals</span>
+                    <button class="btn-add-goal" id="btn-add-goal">+ Goal</button>
+                </div>
+                <div class="goals-list" id="goals-list"></div>
+            </div>
+
+            <!-- Filter bar -->
+            <div class="filter-bar" id="filter-bar">
+                <button class="filter-btn active" data-filter="">All</button>
+                <button class="filter-btn" data-filter="p1">P1</button>
+                <button class="filter-btn" data-filter="p2">P2</button>
+                <button class="filter-btn" data-filter="p3">P3</button>
+                <button class="filter-btn" data-filter="open">Open</button>
+                <button class="filter-btn" data-filter="done">Done</button>
+                <button class="filter-btn" data-filter="auto">Auto</button>
+                <button class="btn-clear-done" id="btn-clear-done">Clear done</button>
+            </div>
+
+            <!-- Task list -->
+            <div class="task-list" id="task-list"></div>
         </div>
 
-        <!-- Filter bar -->
-        <div class="filter-bar" id="filter-bar">
-            <button class="filter-btn active" data-filter="">All</button>
-            <button class="filter-btn" data-filter="p1">P1</button>
-            <button class="filter-btn" data-filter="p2">P2</button>
-            <button class="filter-btn" data-filter="p3">P3</button>
-            <button class="filter-btn" data-filter="open">Open</button>
-            <button class="filter-btn" data-filter="done">Done</button>
-            <button class="filter-btn" data-filter="auto">Auto</button>
-            <button class="btn-clear-done" id="btn-clear-done">Clear done</button>
-        </div>
+        <!-- ===== Metrics View ===== -->
+        <div id="metrics-view" style="display:none">
+            <!-- Week selector + official metrics bar -->
+            <div class="metrics-week-bar">
+                <button class="week-nav-btn" id="week-prev" title="Previous week">&larr;</button>
+                <span class="week-label" id="metrics-week-label">Week of ...</span>
+                <button class="week-nav-btn" id="week-next" title="Next week">&rarr;</button>
+                <div class="official-metrics" id="official-metrics">
+                    <div class="metric-group">
+                        <span class="metric-group-label">All Tickets</span>
+                        <span class="official-metric">
+                            <span class="metric-label">Cycle</span>
+                            <span class="metric-value" id="official-ct">--</span>
+                        </span>
+                        <span class="official-metric">
+                            <span class="metric-label">Lead</span>
+                            <span class="metric-value" id="official-lt">--</span>
+                        </span>
+                        <span class="metric-count" id="all-issues-count"></span>
+                    </div>
+                    <div class="metric-group-divider"></div>
+                    <div class="metric-group">
+                        <span class="metric-group-label">Roster Avg</span>
+                        <span class="official-metric">
+                            <span class="metric-label">Cycle</span>
+                            <span class="metric-value" id="roster-ct">--</span>
+                        </span>
+                        <span class="official-metric">
+                            <span class="metric-label">Lead</span>
+                            <span class="metric-value" id="roster-lt">--</span>
+                        </span>
+                        <span class="metric-count" id="roster-issues-count"></span>
+                    </div>
+                </div>
+                <div class="metrics-actions">
+                    <button class="btn-report" id="btn-metrics-report">Report</button>
+                    <button class="btn-add-goal" id="btn-manage-roster">Roster</button>
+                    <button class="btn-refresh" id="btn-collect" title="Collect metrics">&#8635;</button>
+                </div>
+            </div>
 
-        <!-- Task list -->
-        <div class="task-list" id="task-list"></div>
+            <!-- Loading / Error / Empty states -->
+            <div id="metrics-loading" class="metrics-state" style="display:none">
+                <div class="skeleton-grid">
+                    <div class="skeleton-card"></div><div class="skeleton-card"></div>
+                    <div class="skeleton-card"></div><div class="skeleton-card"></div>
+                </div>
+            </div>
+            <div id="metrics-empty" class="metrics-state" style="display:none">
+                <div class="empty-state">
+                    <p>No metrics data yet.</p>
+                    <p>Add developers to the roster, then click &#8635; to collect.</p>
+                    <button class="btn-add" id="btn-empty-roster">+ Add Developer</button>
+                </div>
+            </div>
+            <div id="metrics-error" class="metrics-state" style="display:none">
+                <div class="error-state">
+                    <p>Failed to load metrics.</p>
+                    <button class="btn-add" id="btn-retry-metrics">Retry</button>
+                </div>
+            </div>
+
+            <!-- Dashboard cards grid -->
+            <div class="cards-grid" id="cards-grid" style="display:none">
+                <div class="card" id="card-lines">
+                    <div class="card-header">Lines Committed</div>
+                    <div class="card-body" id="chart-lines"></div>
+                </div>
+                <div class="card" id="card-prs">
+                    <div class="card-header">Pull Requests</div>
+                    <div class="card-body" id="chart-prs"></div>
+                </div>
+                <div class="card" id="card-tickets">
+                    <div class="card-header">Tickets by Status</div>
+                    <div class="card-body" id="chart-tickets"></div>
+                </div>
+                <div class="card" id="card-sp">
+                    <div class="card-header">Story Points by Status <button class="card-header-btn" onclick="showUnestimated()" title="Tickets without story points">0 SP</button> <button class="card-header-btn" id="btn-slack-remind" onclick="sendSlackReminders()" title="Send Slack DM reminders for unestimated tickets" style="background:var(--purple)">Slack Remind</button></div>
+                    <div class="card-body" id="chart-sp"></div>
+                </div>
+                <div class="card" id="card-ratio">
+                    <div class="card-header">SP / Cycle Time Ratio</div>
+                    <div class="card-body" id="chart-ratio"></div>
+                </div>
+                <div class="card" id="card-defects">
+                    <div class="card-header">Defects</div>
+                    <div class="card-body" id="chart-defects"></div>
+                </div>
+                <div class="card card-full" id="card-eps">
+                    <div class="card-header">EPS Score</div>
+                    <div class="card-body" id="chart-eps"></div>
+                </div>
+                <div class="card card-full" id="card-detail">
+                    <div class="card-header">Cycle &amp; Lead Time Detail</div>
+                    <div class="card-body" id="detail-table-container"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Report modal -->
@@ -94,11 +202,104 @@
                 <input type="text" id="goal-title-input" placeholder="Goal title..." autocomplete="off">
                 <label>Description</label>
                 <textarea id="goal-desc-input" rows="3" placeholder="Details..."></textarea>
-                <label>Progress Notes</label>
-                <textarea id="goal-notes-input" rows="2" placeholder="Progress update..."></textarea>
+                <label>Add Progress Note</label>
+                <input type="text" id="goal-notes-input" placeholder="Add a progress note...">
+                <div class="notes-history" id="goal-notes-history"></div>
             </div>
             <div class="modal-footer">
                 <button class="btn-save-goal" id="btn-save-goal">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Metrics report modal -->
+    <div class="modal-overlay" id="metrics-report-modal">
+        <div class="modal report-modal">
+            <div class="modal-header">
+                <span class="modal-title">Metrics Report</span>
+                <button class="modal-close" id="metrics-report-close">&times;</button>
+            </div>
+            <pre class="report-text" id="metrics-report-text"></pre>
+            <div class="modal-footer">
+                <button class="btn-copy" id="btn-copy-metrics-report">Copy to Clipboard</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Developer roster modal -->
+    <div class="modal-overlay" id="roster-modal">
+        <div class="modal" style="max-width:700px">
+            <div class="modal-header">
+                <span class="modal-title">Developer Roster</span>
+                <div style="display:flex;gap:6px;align-items:center">
+                    <button class="card-header-btn" id="btn-automatch-bb" onclick="bulkAutomatchBB()" title="Auto-match Bitbucket users by name">Auto-match BB</button>
+                    <button class="card-header-btn" id="btn-automatch-slack" onclick="bulkAutomatchSlack()" title="Auto-match Slack users by email">Auto-match Slack</button>
+                    <button class="btn-merge" id="btn-merge-devs" style="display:none" title="Merge selected developers">Merge</button>
+                    <button class="modal-close" id="roster-modal-close">&times;</button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="roster-list"></div>
+                <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:8px;text-align:right">
+                    <button class="btn-add" id="btn-add-dev">+ Add Developer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Developer edit modal -->
+    <div class="modal-overlay" id="dev-edit-modal">
+        <div class="modal" style="max-width:480px">
+            <div class="modal-header">
+                <span class="modal-title">Edit Developer</span>
+                <button class="modal-close" id="dev-edit-modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="dev-edit-id">
+                <label>Jira User</label>
+                <div class="picker-wrapper">
+                    <input type="text" id="dev-edit-jira" autocomplete="off" placeholder="Type name to search Jira...">
+                    <input type="hidden" id="dev-edit-jira-id">
+                    <div class="picker-dropdown" id="jira-picker-edit"></div>
+                </div>
+                <label>Display Name</label>
+                <input type="text" id="dev-edit-name" autocomplete="off">
+                <label>Email</label>
+                <input type="text" id="dev-edit-email" autocomplete="off">
+                <label>Bitbucket Username</label>
+                <div class="picker-wrapper">
+                    <input type="text" id="dev-edit-bb" autocomplete="off" placeholder="Type to search BB users...">
+                    <div class="picker-dropdown" id="bb-picker-edit"></div>
+                </div>
+                <label>Slack User</label>
+                <div class="picker-wrapper">
+                    <input type="text" id="dev-edit-slack" autocomplete="off" placeholder="Type to search Slack users...">
+                    <input type="hidden" id="dev-edit-slack-id">
+                    <div class="picker-dropdown" id="slack-picker-edit"></div>
+                </div>
+                <label>Team</label>
+                <input type="text" id="dev-edit-team" autocomplete="off">
+                <label>Role</label>
+                <input type="text" id="dev-edit-role" autocomplete="off">
+            </div>
+            <div class="modal-footer">
+                <button class="btn-save-goal" id="btn-save-dev">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Unestimated Tickets Modal -->
+    <div class="modal-overlay" id="unestimated-modal">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <span>Tickets Without Story Points</span>
+                <button class="modal-close" onclick="closeUnestimatedModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="unestimated-body">
+                <div class="picker-loading">Loading...</div>
+            </div>
+            <div class="modal-footer">
+                <a id="unestimated-jira-link" href="#" target="_blank" rel="noopener" class="btn-save-goal">Open in Jira</a>
             </div>
         </div>
     </div>

@@ -1,9 +1,10 @@
 """SQLAlchemy models for Task and AgentRun."""
 
+import json
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -71,6 +72,19 @@ class Goal(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    def _parse_progress_notes(self) -> list:
+        """Safely parse progress_notes JSON, handling corrupt data."""
+        if not self.progress_notes:
+            return []
+        try:
+            parsed = json.loads(self.progress_notes)
+            if isinstance(parsed, list):
+                return parsed
+            return []
+        except (json.JSONDecodeError, TypeError):
+            # Raw text stored instead of JSON — wrap it
+            return [{"ts": self.created_at.isoformat() if self.created_at else "", "text": self.progress_notes}]
+
     def to_dict(self) -> dict:
         """Serialize goal to dictionary."""
         return {
@@ -79,7 +93,7 @@ class Goal(Base):
             "description": self.description,
             "status": self.status,
             "week_start": self.week_start.isoformat() if self.week_start else None,
-            "progress_notes": self.progress_notes,
+            "progress_notes": self._parse_progress_notes(),
             "jira_key": self.jira_key,
             "jira_url": self.jira_url,
             "sort_order": self.sort_order,
@@ -111,4 +125,151 @@ class AgentRun(Base):
             "tasks_created": self.tasks_created,
             "tasks_updated": self.tasks_updated,
             "error_message": self.error_message,
+        }
+
+
+class DeveloperRoster(Base):
+    """Developer identity mapping for cross-system metrics collection."""
+
+    __tablename__ = "developer_roster"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    jira_account_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    bitbucket_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    slack_user_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    team: Mapped[str] = mapped_column(String(50), default="engineering")
+    role: Mapped[str] = mapped_column(String(50), default="Engineer")
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "display_name": self.display_name,
+            "email": self.email,
+            "jira_account_id": self.jira_account_id,
+            "bitbucket_username": self.bitbucket_username,
+            "slack_user_id": self.slack_user_id,
+            "team": self.team,
+            "role": self.role,
+            "start_date": self.start_date.isoformat() if self.start_date else None,
+            "active": self.active,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class WeeklySnapshot(Base):
+    """Per-developer weekly metrics snapshot."""
+
+    __tablename__ = "weekly_snapshots"
+    __table_args__ = (UniqueConstraint("week_start", "developer_id", name="uq_snapshot_week_dev"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    developer_id: Mapped[str] = mapped_column(String(36), ForeignKey("developer_roster.id"), nullable=False)
+    lines_committed: Mapped[int] = mapped_column(Integer, default=0)
+    pr_count: Mapped[int] = mapped_column(Integer, default=0)
+    tickets_todo: Mapped[int] = mapped_column(Integer, default=0)
+    tickets_wip: Mapped[int] = mapped_column(Integer, default=0)
+    tickets_qa: Mapped[int] = mapped_column(Integer, default=0)
+    tickets_closed: Mapped[int] = mapped_column(Integer, default=0)
+    sp_todo: Mapped[int] = mapped_column(Integer, default=0)
+    sp_wip: Mapped[int] = mapped_column(Integer, default=0)
+    sp_qa: Mapped[int] = mapped_column(Integer, default=0)
+    sp_closed: Mapped[int] = mapped_column(Integer, default=0)
+    cycle_time_mean: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cycle_time_median: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cycle_time_p85: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lead_time_mean: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lead_time_median: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lead_time_p85: Mapped[float | None] = mapped_column(Float, nullable=True)
+    defects_total: Mapped[int] = mapped_column(Integer, default=0)
+    defects_new: Mapped[int] = mapped_column(Integer, default=0)
+    defects_closed: Mapped[int] = mapped_column(Integer, default=0)
+    defects_p1: Mapped[int] = mapped_column(Integer, default=0)
+    defects_p2: Mapped[int] = mapped_column(Integer, default=0)
+    defects_other: Mapped[int] = mapped_column(Integer, default=0)
+    eps_productivity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eps_quality: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eps_velocity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eps_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "week_start": self.week_start.isoformat() if self.week_start else None,
+            "developer_id": self.developer_id,
+            "lines_committed": self.lines_committed,
+            "pr_count": self.pr_count,
+            "tickets": {"todo": self.tickets_todo, "wip": self.tickets_wip, "qa": self.tickets_qa, "closed": self.tickets_closed},
+            "story_points": {"todo": self.sp_todo, "wip": self.sp_wip, "qa": self.sp_qa, "closed": self.sp_closed},
+            "cycle_time": {"mean": self.cycle_time_mean, "median": self.cycle_time_median, "p85": self.cycle_time_p85},
+            "lead_time": {"mean": self.lead_time_mean, "median": self.lead_time_median, "p85": self.lead_time_p85},
+            "defects_total": self.defects_total,
+            "defects_new": self.defects_new,
+            "defects_closed": self.defects_closed,
+            "defects_p1": self.defects_p1,
+            "defects_p2": self.defects_p2,
+            "defects_other": self.defects_other,
+            "eps": {"score": self.eps_score, "ps": self.eps_productivity, "qm": self.eps_quality, "vm": self.eps_velocity},
+        }
+
+
+class WeeklyTeamSummary(Base):
+    """Team-level weekly metrics summary."""
+
+    __tablename__ = "weekly_team_summary"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    week_start: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
+    total_lines: Mapped[int] = mapped_column(Integer, default=0)
+    total_prs: Mapped[int] = mapped_column(Integer, default=0)
+    total_tickets_closed: Mapped[int] = mapped_column(Integer, default=0)
+    total_sp_closed: Mapped[int] = mapped_column(Integer, default=0)
+    # All resolved tickets (team-wide, includes non-roster assignees)
+    avg_cycle_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_lead_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_cycle_time_median: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_lead_time_median: Mapped[float | None] = mapped_column(Float, nullable=True)
+    all_issues_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Roster developers only
+    roster_avg_cycle_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    roster_avg_lead_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    roster_issues_count: Mapped[int] = mapped_column(Integer, default=0)
+    defects_total: Mapped[int] = mapped_column(Integer, default=0)
+    defects_new: Mapped[int] = mapped_column(Integer, default=0)
+    defects_closed: Mapped[int] = mapped_column(Integer, default=0)
+    defects_p1: Mapped[int] = mapped_column(Integer, default=0)
+    defects_p2: Mapped[int] = mapped_column(Integer, default=0)
+    defects_other: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "week_start": self.week_start.isoformat() if self.week_start else None,
+            "total_lines": self.total_lines,
+            "total_prs": self.total_prs,
+            "total_tickets_closed": self.total_tickets_closed,
+            "total_sp_closed": self.total_sp_closed,
+            "avg_cycle_time": self.avg_cycle_time,
+            "avg_lead_time": self.avg_lead_time,
+            "avg_cycle_time_median": self.avg_cycle_time_median,
+            "avg_lead_time_median": self.avg_lead_time_median,
+            "all_issues_count": self.all_issues_count,
+            "roster_avg_cycle_time": self.roster_avg_cycle_time,
+            "roster_avg_lead_time": self.roster_avg_lead_time,
+            "roster_issues_count": self.roster_issues_count,
+            "defects_total": self.defects_total,
+            "defects_new": self.defects_new,
+            "defects_closed": self.defects_closed,
+            "defects_p1": self.defects_p1,
+            "defects_p2": self.defects_p2,
+            "defects_other": self.defects_other,
         }

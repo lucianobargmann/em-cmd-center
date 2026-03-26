@@ -93,7 +93,7 @@ def run_stack_rank(jira_client, team_projects: list[str], script_path: str) -> d
         # Create review task
         task = Task(
             title=f"Stack rank ready — review output/stack_rank_{today.isoformat()}.csv",
-            priority="p1",
+            priority="p3",
             category="reports",
             auto=True,
             source="stack_rank",
