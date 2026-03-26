@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,9 @@ async def run_claude_suggest(issue_key: str) -> dict:
 
     user_message = f"Read workdir/{issue_key}.md and follow your system prompt"
 
+    # Clear env vars that prevent nested Claude Code sessions
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDECODE")}
+
     proc = await asyncio.create_subprocess_exec(
         CLAUDE_BIN,
         "--print",
@@ -93,6 +97,7 @@ async def run_claude_suggest(issue_key: str) -> dict:
         user_message,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     stdout, stderr = await proc.communicate()
 
