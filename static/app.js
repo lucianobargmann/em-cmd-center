@@ -608,6 +608,25 @@ function renderTasks() {
         }
         container.appendChild(section);
     }
+
+    // Re-open panel if one was active before re-render
+    if (openPanelTaskId && openPanelType) {
+        const savedId = openPanelTaskId;
+        const savedType = openPanelType;
+        const wrapper = document.querySelector(`.task-wrapper[data-task-id="${savedId}"]`);
+        if (wrapper && !wrapper.querySelector('.detail-panel')) {
+            // Only re-open non-streaming panels (analysis/ranking) since comment is long-running
+            if (savedType !== 'comment') {
+                openPanelTaskId = null;
+                openPanelType = null;
+                togglePanel(savedId, savedType);
+            } else {
+                // For comment panel, just keep the state but don't re-trigger
+                openPanelTaskId = null;
+                openPanelType = null;
+            }
+        }
+    }
 }
 
 function createTaskRow(task, isDoNext) {
@@ -730,29 +749,33 @@ function createTaskRow(task, isDoNext) {
 // ---- Detail Panels ----
 let openPanelTaskId = null;
 let openPanelType = null;
+const CLOSE_BTN = '<button class="btn-close-panel" onclick="closePanel()">&times;</button>';
+
+function closePanel() {
+    document.querySelectorAll('.detail-panel').forEach(p => p.remove());
+    openPanelTaskId = null;
+    openPanelType = null;
+}
 
 function togglePanel(taskId, type) {
     const wrapper = document.querySelector(`.task-wrapper[data-task-id="${taskId}"]`);
     if (!wrapper) return;
 
-    const existing = wrapper.querySelector('.detail-panel');
-
-    // Close any open panel across all tasks
-    document.querySelectorAll('.detail-panel').forEach(p => p.remove());
-
-    // If same panel was open, just close it
+    // If same panel was open, close it
     if (openPanelTaskId === taskId && openPanelType === type) {
-        openPanelTaskId = null;
-        openPanelType = null;
+        closePanel();
         return;
     }
+
+    // Close any existing panel first
+    document.querySelectorAll('.detail-panel').forEach(p => p.remove());
 
     openPanelTaskId = taskId;
     openPanelType = type;
 
     const panel = document.createElement('div');
     panel.className = 'detail-panel';
-    panel.innerHTML = '<div class="detail-loading">Loading...</div>';
+    panel.innerHTML = CLOSE_BTN + '<div class="detail-loading">Loading...</div>';
     wrapper.appendChild(panel);
 
     if (type === 'analysis') {
@@ -769,7 +792,7 @@ async function showAnalysis(taskId, panel) {
         const resp = await fetch(`/api/tasks/${taskId}/analysis`);
         if (!resp.ok) {
             const err = await resp.json();
-            panel.innerHTML = `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
+            panel.innerHTML = CLOSE_BTN + `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
             return;
         }
         const data = await resp.json();
@@ -811,9 +834,9 @@ async function showAnalysis(taskId, panel) {
         html += '</ul>';
         html += '</div>';
 
-        panel.innerHTML = html;
+        panel.innerHTML = CLOSE_BTN + html;
     } catch (e) {
-        panel.innerHTML = '<div class="detail-error">Failed to load analysis</div>';
+        panel.innerHTML = CLOSE_BTN + '<div class="detail-error">Failed to load analysis</div>';
         console.error('Analysis error:', e);
     }
 }
@@ -823,7 +846,7 @@ async function showRanking(taskId, panel) {
         const resp = await fetch(`/api/tasks/${taskId}/ranking`);
         if (!resp.ok) {
             const err = await resp.json();
-            panel.innerHTML = `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
+            panel.innerHTML = CLOSE_BTN + `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
             return;
         }
         const data = await resp.json();
@@ -845,15 +868,15 @@ async function showRanking(taskId, panel) {
         html += `<div class="detail-sort-explanation">${escapeHtml(data.sort_explanation)}</div>`;
         html += '</div>';
 
-        panel.innerHTML = html;
+        panel.innerHTML = CLOSE_BTN + html;
     } catch (e) {
-        panel.innerHTML = '<div class="detail-error">Failed to load ranking</div>';
+        panel.innerHTML = CLOSE_BTN + '<div class="detail-error">Failed to load ranking</div>';
         console.error('Ranking error:', e);
     }
 }
 
 function showCommentSuggest(taskId, panel) {
-    panel.innerHTML = '<div class="detail-content"><div class="detail-loading" id="comment-steps-' + taskId + '">Connecting...</div></div>';
+    panel.innerHTML = CLOSE_BTN + '<div class="detail-content"><div class="detail-loading" id="comment-steps-' + taskId + '">Connecting...</div></div>';
 
     const es = new EventSource(`/api/tasks/${taskId}/suggest-comment`);
     const stepsEl = document.getElementById(`comment-steps-${taskId}`);
@@ -877,19 +900,19 @@ function showCommentSuggest(taskId, panel) {
         console.log('[Duke] Comment suggestion complete', data);
 
         if (data.error) {
-            panel.innerHTML = `<div class="detail-error">${escapeHtml(data.error)}</div>`;
+            panel.innerHTML = CLOSE_BTN + `<div class="detail-error">${escapeHtml(data.error)}</div>`;
             return;
         }
 
         let html = '<div class="detail-content">';
-        html += `<div class="detail-summary">${escapeHtml(data.jira_key)} — ${data.comments_count} existing comment(s)</div>`;
+        html += `<div class="detail-summary">${escapeHtml(data.jira_key)} - ${data.comments_count} existing comment(s)</div>`;
         html += `<div class="detail-desc">${escapeHtml(data.summary)}</div>`;
         html += '<div class="detail-actions-header">Suggested Comment</div>';
         html += `<textarea class="comment-textarea" id="comment-text-${taskId}">${escapeHtml(data.suggested_comment)}</textarea>`;
         html += `<button class="btn-send-comment" onclick="postComment('${taskId}')">Send to Jira</button>`;
         html += `<div class="comment-status" id="comment-status-${taskId}"></div>`;
         html += '</div>';
-        panel.innerHTML = html;
+        panel.innerHTML = CLOSE_BTN + html;
     });
 
     es.addEventListener('error', (e) => {
@@ -897,10 +920,10 @@ function showCommentSuggest(taskId, panel) {
         if (e.data) {
             const data = JSON.parse(e.data);
             console.error('[Duke] SSE error:', data.detail);
-            panel.innerHTML = `<div class="detail-error">${escapeHtml(data.detail)}</div>`;
+            panel.innerHTML = CLOSE_BTN + `<div class="detail-error">${escapeHtml(data.detail)}</div>`;
         } else {
             console.error('[Duke] Connection lost');
-            panel.innerHTML = '<div class="detail-error">Connection lost — try again</div>';
+            panel.innerHTML = CLOSE_BTN + '<div class="detail-error">Connection lost - try again</div>';
         }
     });
 
@@ -908,7 +931,7 @@ function showCommentSuggest(taskId, panel) {
         es.close();
         if (!panel.querySelector('.detail-desc') && !panel.querySelector('.detail-error')) {
             console.error('[Duke] EventSource failed');
-            panel.innerHTML = '<div class="detail-error">Connection failed — try again</div>';
+            panel.innerHTML = CLOSE_BTN + '<div class="detail-error">Connection failed - try again</div>';
         }
     };
 }
