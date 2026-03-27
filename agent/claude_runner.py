@@ -27,13 +27,16 @@ def write_context_file(issue_key: str, detail: dict, comments: list[dict]) -> Pa
     WORKDIR.mkdir(exist_ok=True)
     path = WORKDIR / f"{issue_key}.md"
 
+    sp = detail.get("story_points")
+    sp_display = str(sp) if sp is not None else "NOT SET"
+
     lines = [
         f"# {issue_key}: {detail.get('summary', '')}",
         "",
         f"**Status:** {detail.get('status', 'Unknown')}",
         f"**Assignee:** {detail.get('assignee') or 'Unassigned'}",
         f"**Priority:** {detail.get('priority', 'Unknown')}",
-        f"**Story Points:** {detail.get('story_points') or 'None'}",
+        f"**Story Points:** {sp_display}",
         f"**Created:** {detail.get('created', 'Unknown')}",
         f"**Updated:** {detail.get('updated', 'Unknown')}",
     ]
