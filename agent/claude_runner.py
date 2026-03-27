@@ -58,7 +58,7 @@ def write_context_file(issue_key: str, detail: dict, comments: list[dict]) -> Pa
             created = c.get("created", "")[:16].replace("T", " ")
             lines.extend([
                 "",
-                f"### {c.get('author', 'Unknown')} — {created}",
+                f"### {c.get('author', 'Unknown')} - {created}",
                 "",
                 c.get("body", ""),
             ])
@@ -115,11 +115,18 @@ async def run_claude_suggest(issue_key: str) -> dict:
     except json.JSONDecodeError:
         text = raw
 
+    def _clean_dashes(d: dict) -> dict:
+        """Replace em dashes with hyphens in text fields."""
+        for key in ("summary", "suggested_comment"):
+            if key in d and isinstance(d[key], str):
+                d[key] = d[key].replace("\u2014", "-").replace("\u2013", "-")
+        return d
+
     # Parse the inner JSON from Claude's response
     try:
         result = json.loads(text)
         if "summary" in result and "suggested_comment" in result:
-            return result
+            return _clean_dashes(result)
     except json.JSONDecodeError:
         pass
 
@@ -130,8 +137,8 @@ async def run_claude_suggest(issue_key: str) -> dict:
         try:
             result = json.loads(text[start:end])
             if "summary" in result and "suggested_comment" in result:
-                return result
+                return _clean_dashes(result)
         except json.JSONDecodeError:
             pass
 
-    return {"error": f"Could not parse Claude response", "raw": text[:500]}
+    return {"error": "Could not parse Claude response", "raw": text[:500]}
