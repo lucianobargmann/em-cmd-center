@@ -1244,6 +1244,105 @@ body {
     gap: 4px;
 }
 
+/* ===== Defects Two-Panel Layout ===== */
+.defects-layout {
+    display: flex;
+    gap: 24px;
+}
+
+.defects-left {
+    width: 420px;
+    flex-shrink: 0;
+}
+
+.defects-right {
+    flex: 1;
+    min-width: 0;
+}
+
+@media (max-width: 800px) {
+    .defects-layout {
+        flex-direction: column;
+    }
+    .defects-left {
+        width: 100%;
+    }
+}
+
+.defect-divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 16px 0;
+}
+
+.defect-section-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+}
+
+/* KPI cards */
+.kpi-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.kpi-card {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    text-align: center;
+}
+
+.kpi-card.p1 { border-left: 4px solid var(--red); }
+.kpi-card.p2 { border-left: 4px solid var(--amber); }
+.kpi-card.unlabeled { border-left: 4px solid var(--text-secondary); }
+
+.kpi-value {
+    font-size: 28px;
+    font-weight: 800;
+}
+
+.kpi-value.p1 { color: var(--red); }
+.kpi-value.p2 { color: var(--amber); }
+.kpi-value.unlabeled { color: var(--text-secondary); }
+
+.kpi-label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+}
+
+.kpi-sub {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+/* Mini chart */
+.mini-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 100px;
+    padding-top: 20px;
+}
+
+/* Priority segment colors */
+.defect-seg.highest { background: #b71c1c; }
+.defect-seg.high { background: var(--red); }
+.defect-seg.medium { background: var(--amber); }
+.defect-seg.low { background: #42a5f5; }
+.defect-seg.lowest { background: #78909c; }
+
 /* ===== EPS Card ===== */
 .eps-list {
     display: flex;

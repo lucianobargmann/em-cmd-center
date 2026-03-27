@@ -454,18 +454,37 @@ def collect_weekly_metrics(config: dict, week_start: date | None = None) -> None
         except Exception as e:
             logger.error(f"Failed to get defects: {e}")
 
-        # Classify defects by priority field (Highest/High=P1, Medium=P2, rest=other)
+        # Classify defects by Jira labels (p1/p2 labels)
         defects_p1 = 0
         defects_p2 = 0
         defects_other = 0
         for bug in defect_data["open"]:
-            priority_name = (bug.get("fields", {}).get("priority") or {}).get("name", "").lower()
-            if priority_name in ("highest", "high", "critical", "blocker"):
+            labels = [l.lower() for l in bug.get("fields", {}).get("labels", [])]
+            if "p1" in labels:
                 defects_p1 += 1
-            elif priority_name in ("medium",):
+            elif "p2" in labels:
                 defects_p2 += 1
             else:
                 defects_other += 1
+
+        # Classify defects by Jira priority field
+        defects_highest = 0
+        defects_high = 0
+        defects_medium = 0
+        defects_low = 0
+        defects_lowest = 0
+        for bug in defect_data["open"]:
+            priority_name = (bug.get("fields", {}).get("priority") or {}).get("name", "").lower()
+            if priority_name == "highest":
+                defects_highest += 1
+            elif priority_name == "high":
+                defects_high += 1
+            elif priority_name == "low":
+                defects_low += 1
+            elif priority_name == "lowest":
+                defects_lowest += 1
+            else:
+                defects_medium += 1
 
         # 5. Compute EPS and write snapshots
         # Delete existing snapshots for this week (upsert)
@@ -596,6 +615,11 @@ def collect_weekly_metrics(config: dict, week_start: date | None = None) -> None
             defects_p1=defects_p1,
             defects_p2=defects_p2,
             defects_other=defects_other,
+            defects_highest=defects_highest,
+            defects_high=defects_high,
+            defects_medium=defects_medium,
+            defects_low=defects_low,
+            defects_lowest=defects_lowest,
         )
         db.add(summary)
 

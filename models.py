@@ -251,6 +251,11 @@ class WeeklyTeamSummary(Base):
     defects_p1: Mapped[int] = mapped_column(Integer, default=0)
     defects_p2: Mapped[int] = mapped_column(Integer, default=0)
     defects_other: Mapped[int] = mapped_column(Integer, default=0)
+    defects_highest: Mapped[int] = mapped_column(Integer, default=0)
+    defects_high: Mapped[int] = mapped_column(Integer, default=0)
+    defects_medium: Mapped[int] = mapped_column(Integer, default=0)
+    defects_low: Mapped[int] = mapped_column(Integer, default=0)
+    defects_lowest: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     def to_dict(self) -> dict:
@@ -275,4 +280,9 @@ class WeeklyTeamSummary(Base):
             "defects_p1": self.defects_p1,
             "defects_p2": self.defects_p2,
             "defects_other": self.defects_other,
+            "defects_highest": self.defects_highest,
+            "defects_high": self.defects_high,
+            "defects_medium": self.defects_medium,
+            "defects_low": self.defects_low,
+            "defects_lowest": self.defects_lowest,
         }

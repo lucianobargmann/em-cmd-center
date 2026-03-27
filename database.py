@@ -21,6 +21,11 @@ def _migrate_add_columns() -> None:
         ("developer_roster", "slack_user_id", "VARCHAR(50)"),
         ("tasks", "reviewed_at", "DATETIME"),
         ("tasks", "reviewed_jira_updated", "VARCHAR(50)"),
+        ("weekly_team_summary", "defects_highest", "INTEGER DEFAULT 0"),
+        ("weekly_team_summary", "defects_high", "INTEGER DEFAULT 0"),
+        ("weekly_team_summary", "defects_medium", "INTEGER DEFAULT 0"),
+        ("weekly_team_summary", "defects_low", "INTEGER DEFAULT 0"),
+        ("weekly_team_summary", "defects_lowest", "INTEGER DEFAULT 0"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:

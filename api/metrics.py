@@ -131,11 +131,13 @@ def get_dashboard(week_start: str | None = None) -> dict:
         jira_base = _config.get("JIRA_BASE_URL", "")
         projects = _config.get("JIRA_TEAM_PROJECTS", [])
         proj_jql = ", ".join(projects) if projects else ""
+        ws_iso = ws.isoformat()
         defects = {"total": 0, "new": 0, "closed": 0, "p1": 0, "p2": 0, "other": 0,
-                   "trend": "neutral", "wow_delta": 0, "four_week_avg": 0,
+                   "highest": 0, "high": 0, "medium": 0, "low": 0, "lowest": 0,
+                   "trend": "neutral", "wow_delta": 0, "four_week_avg": 0, "net_flow": 0,
                    "jira_open_url": f"{jira_base}/issues/?jql=project in ({proj_jql}) AND type = Bug AND resolution = Unresolved" if jira_base else "",
-                   "jira_new_url": f"{jira_base}/issues/?jql=project in ({proj_jql}) AND type = Bug AND created >= \"{ws.isoformat()}\"" if jira_base else "",
-                   "jira_closed_url": f"{jira_base}/issues/?jql=project in ({proj_jql}) AND type = Bug AND resolved >= \"{ws.isoformat()}\"" if jira_base else "",
+                   "jira_new_url": f'{jira_base}/issues/?jql=project in ({proj_jql}) AND type = Bug AND created >= "{ws_iso}"' if jira_base else "",
+                   "jira_closed_url": f'{jira_base}/issues/?jql=project in ({proj_jql}) AND type = Bug AND resolved >= "{ws_iso}"' if jira_base else "",
                    }
         if summary:
             defects["total"] = summary.defects_total
@@ -144,13 +146,23 @@ def get_dashboard(week_start: str | None = None) -> dict:
             defects["p1"] = summary.defects_p1
             defects["p2"] = summary.defects_p2
             defects["other"] = summary.defects_other
+            defects["highest"] = getattr(summary, "defects_highest", 0) or 0
+            defects["high"] = getattr(summary, "defects_high", 0) or 0
+            defects["medium"] = getattr(summary, "defects_medium", 0) or 0
+            defects["low"] = getattr(summary, "defects_low", 0) or 0
+            defects["lowest"] = getattr(summary, "defects_lowest", 0) or 0
 
             if prev_summary:
-                delta = summary.defects_new - prev_summary.defects_new
+                # WoW trend based on open defect density (total open change)
+                delta = summary.defects_total - prev_summary.defects_total
                 defects["wow_delta"] = delta
+                # Up = more open defects (bad), Down = fewer open defects (good)
                 defects["trend"] = "up" if delta > 0 else ("down" if delta < 0 else "neutral")
 
-            # 4-week rolling average
+            # Net flow this week (new - closed)
+            defects["net_flow"] = (summary.defects_new or 0) - (summary.defects_closed or 0)
+
+            # 4-week rolling average of net flow
             four_weeks_ago = ws - timedelta(weeks=3)
             recent = (
                 db.query(WeeklyTeamSummary)
@@ -158,7 +170,9 @@ def get_dashboard(week_start: str | None = None) -> dict:
                 .all()
             )
             if recent:
-                defects["four_week_avg"] = round(sum(r.defects_new for r in recent) / len(recent), 1)
+                defects["four_week_avg"] = round(
+                    sum((r.defects_new or 0) - (r.defects_closed or 0) for r in recent) / len(recent), 1
+                )
 
         # Defect history (up to 12 weeks)
         all_summaries = (
@@ -176,6 +190,18 @@ def get_dashboard(week_start: str | None = None) -> dict:
             for s in all_summaries
         ]
 
+        defect_priority_history = [
+            {
+                "week_start": s.week_start.isoformat(),
+                "highest": getattr(s, "defects_highest", 0) or 0,
+                "high": getattr(s, "defects_high", 0) or 0,
+                "medium": getattr(s, "defects_medium", 0) or 0,
+                "low": getattr(s, "defects_low", 0) or 0,
+                "lowest": getattr(s, "defects_lowest", 0) or 0,
+            }
+            for s in all_summaries
+        ]
+
         # Available weeks
         weeks_available = sorted(
             set(s.week_start.isoformat() for s in all_summaries),
@@ -188,6 +214,7 @@ def get_dashboard(week_start: str | None = None) -> dict:
             "developers": developers_list,
             "defects": defects,
             "defect_history": defect_history,
+            "defect_priority_history": defect_priority_history,
             "weeks_available": weeks_available,
         }
     finally:

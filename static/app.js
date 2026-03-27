@@ -1147,7 +1147,8 @@ function renderMetrics() {
     renderStackedBars('chart-tickets', data.developers, 'tickets');
     renderStackedBars('chart-sp', data.developers, 'story_points');
     renderRatioChart('chart-ratio', data.developers);
-    renderDefectCard('chart-defects', data.defects, data.defect_history);
+    renderDefectSummaryCard('chart-defects-summary', data.defects, data.defect_history);
+    renderDefectPriorityCard('chart-defects-priority', data.defects, data.defect_priority_history || []);
     renderEPSCard('chart-eps', data.developers);
     renderDetailTable('detail-table-container', data.developers);
 }
@@ -1265,7 +1266,7 @@ function renderRatioChart(containerId, devs) {
     container.appendChild(chart);
 }
 
-function renderDefectCard(containerId, defects, history) {
+function renderDefectSummaryCard(containerId, defects, history) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
 
@@ -1286,43 +1287,80 @@ function renderDefectCard(containerId, defects, history) {
         }
     }
 
-    // Trend
-    let trendArrow = '\u2014'; // em dash
+    // Trend -- based on open defect count change WoW
+    let trendArrow = '-';
     let trendClass = 'neutral';
-    if (defects.trend === 'up') { trendArrow = '\u25B2 ' + Math.abs(defects.wow_delta); trendClass = 'bad'; }
-    else if (defects.trend === 'down') { trendArrow = '\u25BC ' + Math.abs(defects.wow_delta); trendClass = 'good'; }
-    summary.innerHTML += `<div class="defect-trend"><span class="wow-arrow ${trendClass}">${trendArrow}</span> WoW</div>`;
+    if (defects.trend === 'up') { trendArrow = '\u25B2 +' + Math.abs(defects.wow_delta); trendClass = 'bad'; }
+    else if (defects.trend === 'down') { trendArrow = '\u25BC -' + Math.abs(defects.wow_delta); trendClass = 'good'; }
+    const netFlow = defects.net_flow != null ? defects.net_flow : 0;
+    const netSign = netFlow > 0 ? '+' : '';
+    summary.innerHTML += `<div class="defect-trend"><span class="wow-arrow ${trendClass}">${trendArrow} open WoW</span><br><span style="font-size:11px;color:var(--text-secondary)">net flow: ${netSign}${netFlow} (new ${defects.new} - closed ${defects.closed})</span></div>`;
 
     container.appendChild(summary);
 
-    // Stacked column chart
+    // Divider
+    container.innerHTML += '<hr class="defect-divider">';
+
+    // KPI cards (P1/P2/Unlabeled by Jira label)
+    const kpiSection = document.createElement('div');
+    kpiSection.innerHTML = '<div class="defect-section-label">By Label</div>';
+    kpiSection.innerHTML += `
+        <div class="kpi-row">
+            <div class="kpi-card p1">
+                <div class="kpi-value p1">${defects.p1}</div>
+                <div class="kpi-label">P1</div>
+                <div class="kpi-sub">Critical / Blocker</div>
+            </div>
+            <div class="kpi-card p2">
+                <div class="kpi-value p2">${defects.p2}</div>
+                <div class="kpi-label">P2</div>
+                <div class="kpi-sub">High Priority</div>
+            </div>
+            <div class="kpi-card unlabeled">
+                <div class="kpi-value unlabeled">${defects.other}</div>
+                <div class="kpi-label">Unlabeled</div>
+                <div class="kpi-sub">Needs triage</div>
+            </div>
+        </div>
+    `;
+    container.appendChild(kpiSection);
+
+    // Divider + Mini P1/P2 trend chart
+    container.innerHTML += '<hr class="defect-divider">';
+
     if (history && history.length > 0) {
         const last6 = history.slice(-6);
-        const maxH = Math.max(...last6.map(w => (w.p1 || 0) + (w.p2 || 0) + (w.other || 0)), 1);
+        const maxH = Math.max(...last6.map(w => (w.p1 || 0) + (w.p2 || 0)), 1);
+
+        const trendSection = document.createElement('div');
+        trendSection.innerHTML = '<div class="defect-section-label">P1 + P2 Trend</div>';
 
         const chart = document.createElement('div');
-        chart.className = 'defect-chart';
-        chart.style.marginBottom = '20px';
+        chart.className = 'defect-chart mini-chart';
 
         const currentWs = metricsData ? metricsData.week_start : '';
         for (const w of last6) {
-            const total = (w.p1 || 0) + (w.p2 || 0) + (w.other || 0);
+            const p1v = w.p1 || 0;
+            const p2v = w.p2 || 0;
+            const total = p1v + p2v;
             const col = document.createElement('div');
             col.className = 'defect-col' + (w.week_start === currentWs ? ' current' : '');
 
-            const p1h = total > 0 ? ((w.p1 || 0) / maxH * 100) : 0;
-            const p2h = total > 0 ? ((w.p2 || 0) / maxH * 100) : 0;
-            const oth = total > 0 ? ((w.other || 0) / maxH * 100) : 0;
+            const p1h = total > 0 ? (p1v / maxH * 100) : 0;
+            const p2h = total > 0 ? (p2v / maxH * 100) : 0;
+
+            const p1Label = p1h > 15 ? `<span class="seg-label">${p1v}</span>` : '';
+            const p2Label = p2h > 15 ? `<span class="seg-label">${p2v}</span>` : '';
 
             col.innerHTML = `
-                <div class="defect-seg other" style="height:${oth}%"></div>
-                <div class="defect-seg p2" style="height:${p2h}%"></div>
-                <div class="defect-seg p1" style="height:${p1h}%"></div>
+                <span class="defect-col-total">${total}</span>
+                <div class="defect-seg p2" style="height:${p2h}%">${p2Label}</div>
+                <div class="defect-seg p1" style="height:${p1h}%">${p1Label}</div>
                 <span class="defect-col-label">${w.week_start.slice(5)}</span>
             `;
             chart.appendChild(col);
         }
-        container.appendChild(chart);
+        trendSection.appendChild(chart);
 
         // Legend
         const legend = document.createElement('div');
@@ -1330,11 +1368,65 @@ function renderDefectCard(containerId, defects, history) {
         legend.innerHTML = `
             <span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>P1</span>
             <span class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span>P2</span>
-            <span class="legend-item"><span class="legend-dot" style="background:var(--text-secondary)"></span>Other</span>
-            <span style="margin-left:auto;font-size:11px;color:var(--text-secondary)">4-wk avg: ${defects.four_week_avg}</span>
         `;
-        container.appendChild(legend);
+        trendSection.appendChild(legend);
+        container.appendChild(trendSection);
     }
+}
+
+function renderDefectPriorityCard(containerId, defects, priorityHistory) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+
+    container.innerHTML = '<div class="defect-section-label">All Open Defects by Jira Priority</div>';
+
+    if (!priorityHistory || priorityHistory.length === 0) {
+        container.innerHTML += '<div style="color:var(--text-secondary);font-size:13px">No priority data yet. Run a metrics collection to populate.</div>';
+        return;
+    }
+
+    const last6 = priorityHistory.slice(-6);
+    const levels = ['highest', 'high', 'medium', 'low', 'lowest'];
+    const maxH = Math.max(...last6.map(w => levels.reduce((s, l) => s + (w[l] || 0), 0)), 1);
+
+    const chart = document.createElement('div');
+    chart.className = 'defect-chart';
+    chart.style.height = '200px';
+    chart.style.marginBottom = '20px';
+
+    const currentWs = metricsData ? metricsData.week_start : '';
+    for (const w of last6) {
+        const total = levels.reduce((s, l) => s + (w[l] || 0), 0);
+        const col = document.createElement('div');
+        col.className = 'defect-col' + (w.week_start === currentWs ? ' current' : '');
+
+        let colHtml = `<span class="defect-col-total">${total}</span>`;
+        // Stack from bottom: lowest first, highest on top (column-reverse)
+        for (const level of levels.slice().reverse()) {
+            const v = w[level] || 0;
+            const h = total > 0 ? (v / maxH * 100) : 0;
+            const label = h > 12 ? `<span class="seg-label">${v}</span>` : '';
+            colHtml += `<div class="defect-seg ${level}" style="height:${h}%">${label}</div>`;
+        }
+        colHtml += `<span class="defect-col-label">${w.week_start.slice(5)}</span>`;
+
+        col.innerHTML = colHtml;
+        chart.appendChild(col);
+    }
+    container.appendChild(chart);
+
+    // Legend
+    const legend = document.createElement('div');
+    legend.className = 'stacked-legend';
+    legend.innerHTML = `
+        <span class="legend-item"><span class="legend-dot" style="background:#b71c1c"></span>Highest</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--red)"></span>High</span>
+        <span class="legend-item"><span class="legend-dot" style="background:var(--amber)"></span>Medium</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#42a5f5"></span>Low</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#78909c"></span>Lowest</span>
+        <span style="margin-left:auto;font-size:11px;color:var(--text-secondary)">4-wk avg net flow: ${defects.four_week_avg > 0 ? '+' : ''}${defects.four_week_avg}</span>
+    `;
+    container.appendChild(legend);
 }
 
 function renderEPSCard(containerId, devs) {
