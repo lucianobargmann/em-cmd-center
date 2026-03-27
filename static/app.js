@@ -991,6 +991,8 @@ async function postComment(taskId) {
             status.textContent = `Comment posted to ${data.jira_key}`;
             status.className = 'comment-status success';
             textarea.disabled = true;
+            // Auto-mark as reviewed
+            markReviewed(taskId, true);
         } else {
             status.textContent = data.detail || 'Failed to post comment';
             status.className = 'comment-status error';
@@ -1020,12 +1022,15 @@ function copyComment(taskId) {
     });
 }
 
-async function markReviewed(taskId) {
+async function markReviewed(taskId, forceOn) {
+    // If forceOn and already reviewed, skip (avoids toggling off)
+    const existing = tasks.find(t => t.id === taskId);
+    if (forceOn && existing && existing.reviewed_at) return;
+
     try {
         const resp = await fetch(`/api/tasks/${taskId}/mark-reviewed`, { method: 'POST' });
         if (resp.ok) {
             const data = await resp.json();
-            // Update local state and re-render
             const task = tasks.find(t => t.id === taskId);
             if (task) {
                 task.reviewed_at = data.reviewed ? data.reviewed_at : null;
