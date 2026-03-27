@@ -320,3 +320,43 @@ def post_comment(task_id: str, body: PostCommentRequest) -> dict:
         raise HTTPException(status_code=502, detail=f"Jira API error: {e}")
     finally:
         db.close()
+
+
+@router.post("/{task_id}/mark-reviewed")
+def mark_reviewed(task_id: str) -> dict:
+    """Mark a task as reviewed, storing the current Jira updated timestamp."""
+    db = get_db()
+    try:
+        task = db.query(Task).filter(Task.id == task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        if task.reviewed_at:
+            # Toggle off
+            task.reviewed_at = None
+            task.reviewed_jira_updated = None
+            db.commit()
+            return {"reviewed": False}
+
+        # Store current Jira updated timestamp
+        jira_updated = None
+        if task.jira_key:
+            try:
+                client = _get_jira_client()
+                detail = client.get_issue_detail(task.jira_key)
+                jira_updated = detail.get("updated")
+            except Exception:
+                pass
+
+        task.reviewed_at = datetime.now(timezone.utc)
+        task.reviewed_jira_updated = jira_updated
+        db.commit()
+        return {"reviewed": True, "reviewed_at": task.reviewed_at.isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Failed to mark task {task_id} as reviewed")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()

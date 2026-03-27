@@ -686,6 +686,19 @@ body {
     margin-right: 6px;
 }
 
+/* Reviewed indicator */
+.reviewed-icon {
+    color: var(--green);
+    font-size: 13px;
+    flex-shrink: 0;
+    margin-right: 2px;
+}
+
+.btn-action.reviewed {
+    color: var(--green);
+    border-color: var(--green);
+}
+
 /* Task action buttons */
 .task-actions {
     display: flex;

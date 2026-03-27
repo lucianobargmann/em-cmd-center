@@ -19,6 +19,8 @@ def _migrate_add_columns() -> None:
     """Add columns that may be missing from existing tables."""
     migrations = [
         ("developer_roster", "slack_user_id", "VARCHAR(50)"),
+        ("tasks", "reviewed_at", "DATETIME"),
+        ("tasks", "reviewed_jira_updated", "VARCHAR(50)"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:

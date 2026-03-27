@@ -685,9 +685,31 @@ function createTaskRow(task, isDoNext) {
         row.appendChild(link);
     }
 
+    // Reviewed indicator (always visible)
+    if (task.jira_key && task.reviewed_at) {
+        const reviewedIcon = document.createElement('span');
+        reviewedIcon.className = 'reviewed-icon';
+        reviewedIcon.title = 'Up to date';
+        reviewedIcon.textContent = '\u2714';
+        row.appendChild(reviewedIcon);
+    }
+
     // Action buttons container
     const actions = document.createElement('span');
     actions.className = 'task-actions';
+
+    // Mark reviewed button (Jira-linked tasks)
+    if (task.jira_key) {
+        const reviewBtn = document.createElement('button');
+        reviewBtn.className = 'btn-action' + (task.reviewed_at ? ' reviewed' : '');
+        reviewBtn.textContent = '\u2714';
+        reviewBtn.title = task.reviewed_at ? 'Mark as not reviewed' : 'Mark as reviewed';
+        reviewBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            markReviewed(task.id);
+        });
+        actions.appendChild(reviewBtn);
+    }
 
     // AI Analysis button (only for Jira-linked tasks)
     if (task.jira_key) {
@@ -974,6 +996,23 @@ async function postComment(taskId) {
         status.className = 'comment-status error';
         btn.disabled = false;
         console.error('Post comment error:', e);
+    }
+}
+
+async function markReviewed(taskId) {
+    try {
+        const resp = await fetch(`/api/tasks/${taskId}/mark-reviewed`, { method: 'POST' });
+        if (resp.ok) {
+            const data = await resp.json();
+            // Update local state and re-render
+            const task = tasks.find(t => t.id === taskId);
+            if (task) {
+                task.reviewed_at = data.reviewed ? data.reviewed_at : null;
+                renderTasks();
+            }
+        }
+    } catch (e) {
+        console.error('Mark reviewed error:', e);
     }
 }
 

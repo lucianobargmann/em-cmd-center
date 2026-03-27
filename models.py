@@ -35,6 +35,8 @@ class Task(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     source: Mapped[str] = mapped_column(String(50), default="user")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_jira_updated: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     def to_dict(self) -> dict:
         """Serialize task to dictionary."""
@@ -52,6 +54,7 @@ class Task(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "source": self.source,
             "notes": self.notes,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
         }
 
 

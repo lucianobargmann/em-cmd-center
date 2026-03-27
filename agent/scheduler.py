@@ -17,7 +17,7 @@ from agent.jira_client import JiraClient
 from agent.metrics_collector import collect_weekly_metrics
 from agent.stack_rank import run_stack_rank
 from database import get_db
-from models import AgentRun
+from models import AgentRun, Task
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +45,52 @@ def _parse_cron(cron_str: str) -> dict:
     }
 
 
+def _check_reviewed_staleness(config: dict) -> None:
+    """Clear reviewed_at on tasks whose Jira ticket has been updated since review."""
+    db = get_db()
+    try:
+        reviewed_tasks = (
+            db.query(Task)
+            .filter(Task.reviewed_at != None, Task.jira_key != None, Task.reviewed_jira_updated != None)
+            .all()
+        )
+        if not reviewed_tasks:
+            return
+
+        client = JiraClient(config["JIRA_BASE_URL"], config["JIRA_EMAIL"], config["JIRA_API_TOKEN"])
+        cleared = 0
+        for task in reviewed_tasks:
+            try:
+                detail = client.get_issue_detail(task.jira_key)
+                current_updated = detail.get("updated", "")
+                if current_updated and current_updated != task.reviewed_jira_updated:
+                    task.reviewed_at = None
+                    task.reviewed_jira_updated = None
+                    cleared += 1
+                    logger.info(f"[Duke] Cleared reviewed mark on {task.jira_key} (ticket changed)")
+            except Exception as e:
+                logger.warning(f"Failed to check reviewed staleness for {task.jira_key}: {e}")
+        if cleared:
+            db.commit()
+            logger.info(f"[Duke] Cleared {cleared} stale reviewed marks")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Reviewed staleness check failed: {e}")
+    finally:
+        db.close()
+
+
 def _run_full_agent(config: dict) -> None:
     """Run the complete agent cycle: gap detection + daily tasks.
 
     Args:
         config: Application configuration dict.
     """
+    try:
+        _check_reviewed_staleness(config)
+    except Exception as e:
+        logger.error(f"Reviewed staleness check failed: {e}")
+
     try:
         client = JiraClient(
             config["JIRA_BASE_URL"],
