@@ -1568,20 +1568,28 @@ body {
     cursor: not-allowed;
 }
 
-.btn-send-comment {
+.btn-send-comment,
+.btn-copy-comment {
     padding: 6px 14px;
-    background: var(--accent);
-    color: white;
     border: none;
     border-radius: 6px;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    margin-top: 6px;
-    align-self: flex-start;
 }
 
-.btn-send-comment:hover { opacity: 0.9; }
+.btn-send-comment {
+    background: var(--accent);
+    color: white;
+}
+
+.btn-copy-comment {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+.btn-send-comment:hover, .btn-copy-comment:hover { opacity: 0.9; }
 .btn-send-comment:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .comment-status {

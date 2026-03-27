@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/tasks", tags=["task-actions"])
 
 PRIORITY_LABELS = {
-    "p1": "P1 — CEO Escalation",
-    "p2": "P2 — Company Priority",
-    "p3": "P3 — This Week",
-    "p4": "P4 — Backlog",
+    "p1": "P1 - CEO Escalation",
+    "p2": "P2 - Company Priority",
+    "p3": "P3 - This Week",
+    "p4": "P4 - Backlog",
 }
 
 

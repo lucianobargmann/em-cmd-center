@@ -192,6 +192,8 @@ async function loadTasks() {
     try {
         const resp = await fetch(url);
         tasks = await resp.json();
+        // Skip re-render if a panel is open to avoid destroying it
+        if (openPanelTaskId) return;
         renderTasks();
     } catch (e) {
         console.error('Failed to load tasks:', e);
@@ -543,10 +545,10 @@ async function copyReport() {
 
 // ---- Rendering ----
 const PRIORITY_LABELS = {
-    p1: 'P1 — CEO ESCALATION',
-    p2: 'P2 — COMPANY PRIORITY',
-    p3: 'P3 — THIS WEEK',
-    p4: 'P4 — BACKLOG',
+    p1: 'P1 - CEO ESCALATION',
+    p2: 'P2 - COMPANY PRIORITY',
+    p3: 'P3 - THIS WEEK',
+    p4: 'P4 - BACKLOG',
 };
 
 function renderTasks() {
@@ -931,8 +933,11 @@ function showCommentSuggest(taskId, panel) {
         html += `<div class="detail-desc">${escapeHtml(data.summary)}</div>`;
         html += '<div class="detail-actions-header">Suggested Comment</div>';
         html += `<textarea class="comment-textarea" id="comment-text-${taskId}">${escapeHtml(data.suggested_comment)}</textarea>`;
+        html += '<div style="display:flex;gap:6px;margin-top:6px;align-items:center">';
         html += `<button class="btn-send-comment" onclick="postComment('${taskId}')">Send to Jira</button>`;
+        html += `<button class="btn-copy-comment" onclick="copyComment('${taskId}')">Copy</button>`;
         html += `<div class="comment-status" id="comment-status-${taskId}"></div>`;
+        html += '</div>';
         html += '</div>';
         panel.innerHTML = CLOSE_BTN + html;
     });
@@ -997,6 +1002,22 @@ async function postComment(taskId) {
         btn.disabled = false;
         console.error('Post comment error:', e);
     }
+}
+
+function copyComment(taskId) {
+    const textarea = document.getElementById(`comment-text-${taskId}`);
+    const status = document.getElementById(`comment-status-${taskId}`);
+    navigator.clipboard.writeText(textarea.value).then(() => {
+        status.textContent = 'Copied!';
+        status.className = 'comment-status success';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+    }).catch(() => {
+        textarea.select();
+        document.execCommand('copy');
+        status.textContent = 'Copied!';
+        status.className = 'comment-status success';
+        setTimeout(() => { status.textContent = ''; }, 2000);
+    });
 }
 
 async function markReviewed(taskId) {
