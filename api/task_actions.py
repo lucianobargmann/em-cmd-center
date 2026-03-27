@@ -1,9 +1,12 @@
 """Task action endpoints — AI Analysis, Ranking Rationale, and Comment Suggestion."""
 
+import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent.claude_runner import run_claude_suggest, write_context_file
@@ -228,9 +231,9 @@ def get_task_ranking(task_id: str) -> dict:
         db.close()
 
 
-@router.post("/{task_id}/suggest-comment")
-async def suggest_comment(task_id: str) -> dict:
-    """Fetch Jira ticket + comments, run Claude to suggest a comment."""
+@router.get("/{task_id}/suggest-comment")
+async def suggest_comment(task_id: str):
+    """SSE endpoint: fetch Jira ticket + comments, run Claude to suggest a comment."""
     db = get_db()
     try:
         task = db.query(Task).filter(Task.id == task_id).first()
@@ -238,29 +241,53 @@ async def suggest_comment(task_id: str) -> dict:
             raise HTTPException(status_code=404, detail="Task not found")
         if not task.jira_key:
             raise HTTPException(status_code=400, detail="Task has no linked Jira ticket")
-
-        client = _get_jira_client()
-        detail = client.get_issue_detail(task.jira_key)
-        comments = client.get_issue_comments(task.jira_key)
-
-        write_context_file(task.jira_key, detail, comments)
-
-        result = await run_claude_suggest(task.jira_key)
-
-        return {
-            "jira_key": task.jira_key,
-            "summary": result.get("summary", ""),
-            "suggested_comment": result.get("suggested_comment", ""),
-            "comments_count": len(comments),
-            "error": result.get("error"),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"Failed to suggest comment for task {task_id}")
-        raise HTTPException(status_code=502, detail=f"Error: {e}")
+        jira_key = task.jira_key
     finally:
         db.close()
+
+    async def event_stream():
+        def sse(event: str, data: dict) -> str:
+            return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+        try:
+            logger.info(f"[Duke] suggest-comment: loading ticket {jira_key}")
+            yield sse("step", {"step": "Loading Jira ticket..."})
+            client = _get_jira_client()
+            detail = client.get_issue_detail(jira_key)
+            logger.info(f"[Duke] suggest-comment: ticket loaded — {detail.get('summary', '')}")
+            await asyncio.sleep(0)
+
+            yield sse("step", {"step": "Reading comments..."})
+            comments = client.get_issue_comments(jira_key)
+            logger.info(f"[Duke] suggest-comment: {len(comments)} comments found")
+            await asyncio.sleep(0)
+
+            yield sse("step", {"step": f"Found {len(comments)} comment(s). Building context..."})
+            write_context_file(jira_key, detail, comments)
+            logger.info(f"[Duke] suggest-comment: context file written")
+            await asyncio.sleep(0)
+
+            logger.info(f"[Duke] suggest-comment: invoking Claude CLI...")
+            yield sse("step", {"step": "Analyzing ticket with Claude..."})
+            result = await run_claude_suggest(jira_key)
+            logger.info(f"[Duke] suggest-comment: Claude returned (error={result.get('error')})")
+
+            yield sse("step", {"step": "Generating suggested comment..."})
+            await asyncio.sleep(0)
+
+            yield sse("done", {
+                "jira_key": jira_key,
+                "summary": result.get("summary", ""),
+                "suggested_comment": result.get("suggested_comment", ""),
+                "comments_count": len(comments),
+                "error": result.get("error"),
+            })
+            logger.info(f"[Duke] suggest-comment: done for {jira_key}")
+        except Exception as e:
+            logger.exception(f"[Duke] suggest-comment failed for {jira_key}")
+            yield sse("error", {"detail": str(e)})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 class PostCommentRequest(BaseModel):

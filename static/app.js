@@ -852,15 +852,29 @@ async function showRanking(taskId, panel) {
     }
 }
 
-async function showCommentSuggest(taskId, panel) {
-    try {
-        const resp = await fetch(`/api/tasks/${taskId}/suggest-comment`, { method: 'POST' });
-        if (!resp.ok) {
-            const err = await resp.json();
-            panel.innerHTML = `<div class="detail-error">${escapeHtml(err.detail || 'Failed to load')}</div>`;
-            return;
-        }
-        const data = await resp.json();
+function showCommentSuggest(taskId, panel) {
+    panel.innerHTML = '<div class="detail-content"><div class="detail-loading" id="comment-steps-' + taskId + '">Connecting...</div></div>';
+
+    const es = new EventSource(`/api/tasks/${taskId}/suggest-comment`);
+    const stepsEl = document.getElementById(`comment-steps-${taskId}`);
+    const steps = [];
+
+    es.addEventListener('step', (e) => {
+        const data = JSON.parse(e.data);
+        console.log(`[Duke] ${data.step}`);
+        steps.push(data.step);
+        let html = steps.map((s, i) => {
+            const done = i < steps.length - 1;
+            const icon = done ? '<span style="color:var(--green)">&#10003;</span>' : '<span class="detail-loading">&#9679;</span>';
+            return `<div style="font-size:12px;padding:2px 0;color:${done ? 'var(--text-secondary)' : 'var(--text)'}">${icon} ${escapeHtml(s)}</div>`;
+        }).join('');
+        stepsEl.innerHTML = html;
+    });
+
+    es.addEventListener('done', (e) => {
+        es.close();
+        const data = JSON.parse(e.data);
+        console.log('[Duke] Comment suggestion complete', data);
 
         if (data.error) {
             panel.innerHTML = `<div class="detail-error">${escapeHtml(data.error)}</div>`;
@@ -875,12 +889,28 @@ async function showCommentSuggest(taskId, panel) {
         html += `<button class="btn-send-comment" onclick="postComment('${taskId}')">Send to Jira</button>`;
         html += `<div class="comment-status" id="comment-status-${taskId}"></div>`;
         html += '</div>';
-
         panel.innerHTML = html;
-    } catch (e) {
-        panel.innerHTML = '<div class="detail-error">Failed to generate comment suggestion</div>';
-        console.error('Comment suggest error:', e);
-    }
+    });
+
+    es.addEventListener('error', (e) => {
+        es.close();
+        if (e.data) {
+            const data = JSON.parse(e.data);
+            console.error('[Duke] SSE error:', data.detail);
+            panel.innerHTML = `<div class="detail-error">${escapeHtml(data.detail)}</div>`;
+        } else {
+            console.error('[Duke] Connection lost');
+            panel.innerHTML = '<div class="detail-error">Connection lost — try again</div>';
+        }
+    });
+
+    es.onerror = () => {
+        es.close();
+        if (!panel.querySelector('.detail-desc') && !panel.querySelector('.detail-error')) {
+            console.error('[Duke] EventSource failed');
+            panel.innerHTML = '<div class="detail-error">Connection failed — try again</div>';
+        }
+    };
 }
 
 async function postComment(taskId) {
