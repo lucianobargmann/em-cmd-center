@@ -60,6 +60,7 @@ def send_sp_reminders(config: dict) -> dict:
     sent = 0
     skipped = 0
     errors: list[str] = []
+    notification_log: list[dict] = []
 
     for dev in devs:
         try:
@@ -101,12 +102,38 @@ def send_sp_reminders(config: dict) -> dict:
 
             slack.send_dm(dev.slack_user_id, text)
             sent += 1
+            notification_log.append({"name": dev.display_name, "count": count})
             logger.info("Sent SP reminder to %s (%d tickets)", dev.display_name, count)
 
         except Exception as e:
             error_msg = f"{dev.display_name}: {e}"
             errors.append(error_msg)
             logger.error("Failed to send SP reminder to %s: %s", dev.display_name, e)
+
+    # Send summary DM to the EM
+    em_slack_id = config.get("SLACK_EM_USER_ID", "")
+    if em_slack_id and (sent > 0 or errors):
+        try:
+            summary_lines = [f"*SP Reminder Summary* — {datetime.now().strftime('%b %d, %H:%M')}"]
+            summary_lines.append(f"Sent: *{sent}* | Skipped: *{skipped}* (no unestimated tickets)")
+
+            if notification_log:
+                summary_lines.append("")
+                for entry in notification_log:
+                    summary_lines.append(
+                        f"  \u2022 *{entry['name']}* — {entry['count']} ticket{'s' if entry['count'] != 1 else ''}"
+                    )
+
+            if errors:
+                summary_lines.append("")
+                summary_lines.append(f"_Errors ({len(errors)}):_")
+                for err in errors:
+                    summary_lines.append(f"  \u26A0 {err}")
+
+            slack.send_dm(em_slack_id, "\n".join(summary_lines))
+            logger.info("Sent SP reminder summary to EM")
+        except Exception as e:
+            logger.error("Failed to send summary DM to EM: %s", e)
 
     # Log agent run
     db = get_db()

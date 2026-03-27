@@ -56,6 +56,7 @@ def load_config() -> dict:
         "METRICS_COLLECTION_CRON": os.getenv("METRICS_COLLECTION_CRON", "0 7 * * 1"),
         "SLACK_BOT_TOKEN": os.getenv("SLACK_BOT_TOKEN", ""),
         "SLACK_REMINDER_CRON": os.getenv("SLACK_REMINDER_CRON", "0 8 * * 1-5"),
+        "SLACK_EM_USER_ID": os.getenv("SLACK_EM_USER_ID", ""),
         "APP_PORT": int(os.getenv("APP_PORT", "8765")),
         "AUTO_OPEN_BROWSER": os.getenv("AUTO_OPEN_BROWSER", "true").lower() == "true",
     }
