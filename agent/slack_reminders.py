@@ -68,7 +68,7 @@ def send_sp_reminders(config: dict) -> dict:
             jql = (
                 f'project in ({proj_str}) AND assignee = "{dev.jira_account_id}" '
                 f'AND resolution = Unresolved '
-                f'AND ("Story Points" is EMPTY OR "Story Points" = 0) '
+                f'AND "Story Points" is EMPTY '
                 f'AND type not in (Epic, Sub-task)'
             )
             issues = jira.search_issues(jql, ["summary"], max_results=100)

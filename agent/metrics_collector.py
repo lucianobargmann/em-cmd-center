@@ -117,6 +117,12 @@ def _compute_cycle_times(jira_client: JiraClient, issues: list[dict]) -> dict[st
         assignee = fields.get("assignee")
         if not assignee:
             continue
+
+        # Skip 0 SP tickets — they're placeholders/meetings, not real dev work
+        sp = fields.get("customfield_10016")
+        if sp is not None and sp == 0:
+            continue
+
         account_id = assignee.get("accountId", "")
 
         # Lead time: created → resolved
@@ -182,6 +188,12 @@ def _detect_qa_bounces(jira_client: JiraClient, issues: list[dict]) -> dict[str,
         assignee = fields.get("assignee")
         if not assignee:
             continue
+
+        # Skip 0 SP tickets
+        sp = fields.get("customfield_10016")
+        if sp is not None and sp == 0:
+            continue
+
         account_id = assignee.get("accountId", "")
         issue_key = issue.get("key", "")
 
@@ -398,7 +410,11 @@ def collect_weekly_metrics(config: dict, week_start: date | None = None) -> None
             dev = jira_map.get(aid)
             if not dev:
                 continue
-            sp = fields.get("customfield_10016") or 0
+            sp = fields.get("customfield_10016")
+            # Skip 0 SP tickets from closed counts
+            if sp is not None and sp == 0:
+                continue
+            sp = sp or 0
             dev_data[dev.id]["tickets"]["closed"] += 1
             dev_data[dev.id]["sp"]["closed"] += int(sp)
 
@@ -484,7 +500,11 @@ def collect_weekly_metrics(config: dict, week_start: date | None = None) -> None
                 issue_assignee = issue.get("fields", {}).get("assignee")
                 if not issue_assignee or issue_assignee.get("accountId") != aid:
                     continue
-                sp = issue.get("fields", {}).get("customfield_10016") or 0
+                sp = issue.get("fields", {}).get("customfield_10016")
+                # Skip 0 SP tickets from EPS calculations
+                if sp is not None and sp == 0:
+                    continue
+                sp = sp or 0
                 dev_closed_sp += sp
                 dev_resolved_count += 1
                 ps += sp * _complexity_weight(sp)
