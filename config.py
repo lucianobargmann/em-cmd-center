@@ -53,6 +53,8 @@ def load_config() -> dict:
         "BITBUCKET_WORKSPACE": os.getenv("BITBUCKET_WORKSPACE", ""),
         "BITBUCKET_USERNAME": os.getenv("BITBUCKET_USERNAME", ""),
         "BITBUCKET_API_TOKEN": os.getenv("BITBUCKET_API_TOKEN", ""),
+        "GIT_REPOS_DIR": os.getenv("GIT_REPOS_DIR", ""),
+        "GIT_FETCH_CRON": os.getenv("GIT_FETCH_CRON", "0 6,10,14,18 * * 1-5"),
         "METRICS_COLLECTION_CRON": os.getenv("METRICS_COLLECTION_CRON", "0 7 * * 1"),
         "SLACK_BOT_TOKEN": os.getenv("SLACK_BOT_TOKEN", ""),
         "SLACK_REMINDER_CRON": os.getenv("SLACK_REMINDER_CRON", "0 8 * * 1-5"),

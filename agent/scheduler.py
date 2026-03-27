@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from agent.daily_tasks import create_daily_tasks
 from agent.gap_detection import run_gap_detection, sync_priority_labels
+from agent.git_stats import fetch_all_remotes
 from agent.infra_costs import run_infra_cost_check
 from agent.jira_client import JiraClient
 from agent.metrics_collector import collect_weekly_metrics
@@ -159,6 +160,21 @@ def _run_weekly_metrics(config: dict) -> None:
         logger.error(f"Weekly metrics collection failed: {e}")
 
 
+def _run_git_fetch_and_metrics(config: dict) -> None:
+    """Fetch all git remotes then re-collect weekly metrics."""
+    repos_dir = config.get("GIT_REPOS_DIR", "")
+    if not repos_dir:
+        return
+    try:
+        fetch_all_remotes(repos_dir)
+    except Exception as e:
+        logger.error(f"Git fetch failed: {e}")
+    try:
+        collect_weekly_metrics(config)
+    except Exception as e:
+        logger.error(f"Metrics collection (git fetch job) failed: {e}")
+
+
 def _run_slack_sp_reminders(config: dict) -> None:
     """Run the Slack story point reminder job."""
     try:
@@ -287,6 +303,17 @@ def setup_scheduler(config: dict) -> BackgroundScheduler:
         id="weekly_metrics",
         name="Weekly developer metrics",
     )
+
+    # Git fetch + metrics refresh (4x/day weekdays, only if repos dir set)
+    if config.get("GIT_REPOS_DIR"):
+        git_cron = _parse_cron(config.get("GIT_FETCH_CRON", "0 6,10,14,18 * * 1-5"))
+        scheduler.add_job(
+            _run_git_fetch_and_metrics,
+            CronTrigger(**git_cron),
+            args=[config],
+            id="git_fetch_metrics",
+            name="Git fetch + metrics refresh",
+        )
 
     # Slack SP reminders (weekdays 8am by default, only if token set)
     if config.get("SLACK_BOT_TOKEN"):

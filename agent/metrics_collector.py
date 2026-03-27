@@ -11,6 +11,7 @@ import unicodedata
 from datetime import date, datetime, timedelta
 
 from agent.bitbucket_client import BitbucketClient
+from agent.git_stats import fetch_all_remotes, get_lines_by_author
 from agent.jira_client import JiraClient
 from database import get_db
 from models import AgentRun, DeveloperRoster, WeeklySnapshot, WeeklyTeamSummary
@@ -305,7 +306,37 @@ def collect_weekly_metrics(config: dict, week_start: date | None = None) -> None
                 "sp": {"todo": 0, "wip": 0, "qa": 0, "closed": 0},
             }
 
-        # 3. Bitbucket collection
+        # 3a. Lines committed — local git log
+        repos_dir = config.get("GIT_REPOS_DIR", "")
+        if repos_dir:
+            try:
+                fetch_all_remotes(repos_dir)
+                lines_by_author = get_lines_by_author(repos_dir, since_dt, until_dt)
+                logger.info(f"Git stats: {len(lines_by_author)} authors found")
+
+                for key, lines in lines_by_author.items():
+                    if key.startswith("name:"):
+                        continue  # skip name-keyed duplicates in first pass
+                    email = key
+                    dev = email_map.get(email)
+                    if not dev:
+                        dev = _match_by_email(email)
+                    if not dev:
+                        # Try name-based fallback
+                        for name_key, name_lines in lines_by_author.items():
+                            if name_key.startswith("name:") and name_lines == lines:
+                                author_name = name_key[5:]  # strip "name:" prefix
+                                dev = _match_by_name(author_name)
+                                if dev:
+                                    break
+                    if dev:
+                        dev_data[dev.id]["lines"] += lines
+            except Exception as e:
+                logger.error(f"Git stats collection failed: {e}")
+        else:
+            logger.info("GIT_REPOS_DIR not configured, skipping lines collection")
+
+        # 3b. Merged PRs — Bitbucket API
         bb_workspace = config.get("BITBUCKET_WORKSPACE", "")
         bb_token = config.get("BITBUCKET_API_TOKEN", "")
         if bb_workspace and bb_token:
@@ -320,45 +351,10 @@ def collect_weekly_metrics(config: dict, week_start: date | None = None) -> None
                     if not slug:
                         continue
 
-                    # Commits
-                    try:
-                        commits = bb.get_commits_in_range(slug, since_dt, until_dt)
-                        for commit in commits:
-                            author = commit.get("author", {})
-                            author_raw = author.get("raw", "")
-                            # Extract email from "Name <email>" format
-                            email = ""
-                            if "<" in author_raw and ">" in author_raw:
-                                email = author_raw.split("<")[1].split(">")[0].lower()
-
-                            dev = email_map.get(email)
-                            if not dev:
-                                # Try matching by BB user display name
-                                user = author.get("user", {})
-                                bb_name = (user.get("display_name") or user.get("nickname") or "").lower()
-                                dev = bb_map.get(bb_name)
-                            if not dev:
-                                # Try fuzzy name match from git author raw string
-                                author_name = author_raw.split("<")[0].strip() if "<" in author_raw else author_raw
-                                dev = _match_by_name(author_name)
-                            if not dev:
-                                # Try email prefix/pattern matching (GitHub noreply, personal emails)
-                                dev = _match_by_email(email)
-                            if not dev:
-                                continue
-
-                            lines = bb.get_diffstat(slug, commit.get("hash", ""))
-                            dev_data[dev.id]["lines"] += lines
-                    except Exception as e:
-                        logger.warning(f"Failed to get commits for {slug}: {e}")
-
-                    # Merged PRs
                     try:
                         prs = bb.get_merged_prs_in_range(slug, since_dt)
                         for pr in prs:
                             pr_author = pr.get("author", {})
-                            pr_email = ""
-                            # Try user link email
                             pr_user = pr_author if isinstance(pr_author, dict) else {}
                             pr_name = (pr_user.get("display_name") or pr_user.get("nickname") or "").lower()
 
@@ -373,7 +369,7 @@ def collect_weekly_metrics(config: dict, week_start: date | None = None) -> None
             except Exception as e:
                 logger.error(f"Bitbucket collection failed: {e}")
         else:
-            logger.info("Bitbucket not configured, skipping")
+            logger.info("Bitbucket not configured, skipping PRs")
 
         # 4. Jira collection
         jira = JiraClient(

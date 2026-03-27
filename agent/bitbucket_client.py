@@ -106,9 +106,6 @@ class BitbucketClient:
 
     def get_diffstat(self, repo_slug: str, commit_hash: str) -> int:
         """Get total lines changed (added + removed) for a commit."""
-        if self.api_calls >= 900:
-            return 0  # Budget guard — fall back to counting commits
-
         url = f"{BASE_URL}/repositories/{self.workspace}/{repo_slug}/diffstat/{commit_hash}"
         try:
             values = self._paginate(url)
