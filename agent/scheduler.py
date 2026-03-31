@@ -131,8 +131,9 @@ def _run_velocity_summary(config: dict) -> None:
         for project in config["JIRA_TEAM_PROJECTS"]:
             try:
                 issues = client.get_completed_sprint_data(project)
+                from agent.jira_client import _get_story_points
                 total_sp = sum(
-                    (i.get("fields", {}).get("customfield_10016") or 0) for i in issues
+                    (_get_story_points(i.get("fields", {})) or 0) for i in issues
                 )
                 done_count = len(issues)
                 summaries.append(f"{project}: {done_count} tickets, {total_sp} SP delivered")

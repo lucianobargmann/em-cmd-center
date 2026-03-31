@@ -47,7 +47,8 @@ def run_stack_rank(jira_client, team_projects: list[str], script_path: str) -> d
                 if not assignee:
                     continue
                 name = assignee.get("displayName", "Unknown")
-                sp = fields.get("customfield_10016") or 0
+                from agent.jira_client import _get_story_points
+                sp = _get_story_points(fields) or 0
 
                 if name not in engineer_metrics:
                     engineer_metrics[name] = {

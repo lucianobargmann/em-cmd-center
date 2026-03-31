@@ -13,13 +13,14 @@ PROMPT_FILE = Path(__file__).resolve().parent.parent / "prompts" / "suggest_comm
 CLAUDE_BIN = "/home/luke/.local/bin/claude"
 
 
-def write_context_file(issue_key: str, detail: dict, comments: list[dict]) -> Path:
+def write_context_file(issue_key: str, detail: dict, comments: list[dict], *, days_in_status: int | None = None) -> Path:
     """Write ticket data and comments to a markdown file for Claude to read.
 
     Args:
         issue_key: Jira issue key.
         detail: Dict from get_issue_detail().
         comments: List of comment dicts from get_issue_comments().
+        days_in_status: Days the ticket has been in its current status.
 
     Returns:
         Path to the written file.
@@ -30,16 +31,36 @@ def write_context_file(issue_key: str, detail: dict, comments: list[dict]) -> Pa
     sp = detail.get("story_points")
     sp_display = str(sp) if sp is not None else "NOT SET"
 
+    # Expected duration: 1 SP = 1 day of work
+    expected_days = int(sp) if sp is not None and sp > 0 else None
+
+    assignee = detail.get("assignee")
+    assignee_id = detail.get("assignee_account_id")
+    if assignee and assignee_id:
+        assignee_display = f"{assignee} | mention as: @[{assignee}]({assignee_id})"
+    elif assignee:
+        assignee_display = assignee
+    else:
+        assignee_display = "Unassigned"
+
     lines = [
         f"# {issue_key}: {detail.get('summary', '')}",
         "",
         f"**Status:** {detail.get('status', 'Unknown')}",
-        f"**Assignee:** {detail.get('assignee') or 'Unassigned'}",
+        f"**Assignee:** {assignee_display}",
         f"**Priority:** {detail.get('priority', 'Unknown')}",
         f"**Story Points:** {sp_display}",
         f"**Created:** {detail.get('created', 'Unknown')}",
         f"**Updated:** {detail.get('updated', 'Unknown')}",
     ]
+
+    if days_in_status is not None:
+        lines.append(f"**Days in current status:** {days_in_status}")
+        if expected_days is not None:
+            if days_in_status > expected_days:
+                lines.append(f"**Schedule:** DELAYED (expected {expected_days}d based on SP, actual {days_in_status}d)")
+            else:
+                lines.append(f"**Schedule:** On track ({days_in_status}d of {expected_days}d expected)")
 
     if detail.get("due_date"):
         lines.append(f"**Due Date:** {detail['due_date']}")
@@ -59,9 +80,15 @@ def write_context_file(issue_key: str, detail: dict, comments: list[dict]) -> Pa
     else:
         for c in comments:
             created = c.get("created", "")[:16].replace("T", " ")
+            author = c.get("author", "Unknown")
+            author_id = c.get("author_account_id", "")
+            if author_id:
+                author_display = f"{author} | mention as: @[{author}]({author_id})"
+            else:
+                author_display = author
             lines.extend([
                 "",
-                f"### {c.get('author', 'Unknown')} - {created}",
+                f"### {author_display} - {created}",
                 "",
                 c.get("body", ""),
             ])

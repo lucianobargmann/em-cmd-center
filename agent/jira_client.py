@@ -1,12 +1,26 @@
 """Jira REST API wrapper for fetching sprint data, tickets, and changelogs."""
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Story points live in different custom fields depending on Jira project type.
+# Classic projects use customfield_10016; next-gen/team-managed use customfield_10036.
+SP_FIELDS = ["customfield_10016", "customfield_10036"]
+
+
+def _get_story_points(fields: dict) -> float | None:
+    """Return story points from whichever custom field is populated."""
+    for cf in SP_FIELDS:
+        val = fields.get(cf)
+        if val is not None:
+            return val
+    return None
 
 
 class JiraClient:
@@ -110,9 +124,9 @@ class JiraClient:
         )
         fields = [
             "summary", "status", "assignee", "priority",
-            "customfield_10016",  # story points
+            *SP_FIELDS,  # story points
             "description", "duedate", "created", "updated",
-            "issuelinks", "comment",
+            "issuelinks", "comment", "fixVersions",
         ]
         return self.search_issues(jql, fields)
 
@@ -130,7 +144,7 @@ class JiraClient:
             f"AND resolved >= -14d ORDER BY resolved DESC"
         )
         fields = [
-            "summary", "status", "assignee", "customfield_10016",
+            "summary", "status", "assignee", *SP_FIELDS,
             "resolutiondate", "created",
         ]
         return self.search_issues(jql, fields)
@@ -150,6 +164,33 @@ class JiraClient:
         except Exception:
             logger.warning(f"Failed to fetch changelog for {issue_key}")
             return []
+
+    def get_days_in_current_status(self, issue_key: str) -> int | None:
+        """Calculate how many days the issue has been in its current status.
+
+        Uses the changelog to find the last status transition.
+
+        Args:
+            issue_key: e.g. SAOP-123.
+
+        Returns:
+            Number of days, or None if unknown.
+        """
+        try:
+            changelog = self.get_issue_changelog(issue_key)
+            last_status_change = None
+            for entry in changelog:
+                for item in entry.get("items", []):
+                    if item.get("field") == "status":
+                        last_status_change = entry.get("created")
+            if last_status_change:
+                dt = datetime.fromisoformat(last_status_change.replace("Z", "+00:00"))
+                now = datetime.now(dt.tzinfo)
+                return (now - dt).days
+            return None
+        except Exception:
+            logger.warning(f"Failed to get days in status for {issue_key}")
+            return None
 
     def get_issue_has_pr(self, issue_key: str) -> bool:
         """Check if an issue has linked pull requests via dev info.
@@ -288,7 +329,7 @@ class JiraClient:
         """
         fields = [
             "summary", "status", "assignee", "priority",
-            "customfield_10016",  # story points
+            *SP_FIELDS,  # story points
             "description", "duedate", "created", "updated",
             "issuelinks", "comment", "fixVersions",
         ]
@@ -345,8 +386,9 @@ class JiraClient:
             "summary": f.get("summary", ""),
             "status": (f.get("status") or {}).get("name", ""),
             "assignee": (f.get("assignee") or {}).get("displayName", None),
+            "assignee_account_id": (f.get("assignee") or {}).get("accountId", None),
             "priority": (f.get("priority") or {}).get("name", ""),
-            "story_points": f.get("customfield_10016"),
+            "story_points": _get_story_points(f),
             "description_snippet": desc_text[:300] if desc_text else None,
             "due_date": due_date,
             "due_date_source": "duedate" if f.get("duedate") else ("fixVersion" if release_date else None),
@@ -372,7 +414,7 @@ class JiraClient:
         proj_str = ", ".join(projects)
         ids_str = ", ".join(f'"{aid}"' for aid in account_ids)
         jql = f"project in ({proj_str}) AND assignee in ({ids_str}) ORDER BY status ASC"
-        fields = ["summary", "status", "assignee", "customfield_10016", "labels"]
+        fields = ["summary", "status", "assignee", *SP_FIELDS, "labels"]
         return self.search_issues(jql, fields)
 
     def get_tickets_by_assignees_active(self, projects: list[str], account_ids: list[str]) -> list[dict]:
@@ -393,7 +435,7 @@ class JiraClient:
             f"project in ({proj_str}) AND assignee in ({ids_str}) "
             f"AND resolution = Unresolved ORDER BY status ASC"
         )
-        fields = ["summary", "status", "assignee", "customfield_10016", "labels"]
+        fields = ["summary", "status", "assignee", *SP_FIELDS, "labels"]
         return self.search_issues(jql, fields)
 
     def get_resolved_in_range(self, projects: list[str], since: str, until: str) -> list[dict]:
@@ -413,7 +455,7 @@ class JiraClient:
             f'AND resolved <= "{until}" ORDER BY resolved DESC'
         )
         fields = [
-            "summary", "status", "assignee", "customfield_10016",
+            "summary", "status", "assignee", *SP_FIELDS,
             "resolutiondate", "created", "labels", "issuetype",
         ]
         return self.search_issues(jql, fields)
@@ -472,37 +514,106 @@ class JiraClient:
                         for inline in block.get("content", []):
                             if inline.get("type") == "text":
                                 body_text += inline.get("text", "")
+                            elif inline.get("type") == "mention":
+                                # Preserve @mention text
+                                body_text += inline.get("attrs", {}).get("text", "")
                         body_text += "\n"
                 body_text = body_text.strip()
 
                 author = (c.get("author") or {}).get("displayName", "Unknown")
+                author_account_id = (c.get("author") or {}).get("accountId", "")
                 created = c.get("created", "")
-                results.append({"author": author, "created": created, "body": body_text})
+                results.append({"author": author, "author_account_id": author_account_id, "created": created, "body": body_text})
             return results
         except Exception:
             logger.warning(f"Failed to fetch comments for {issue_key}")
             return []
 
+    @staticmethod
+    def _parse_mentions(text: str, name_map: dict[str, str] | None = None) -> list[dict]:
+        """Parse mention syntax into ADF inline nodes.
+
+        Supports two formats:
+        - @[Display Name](accountId) - bracket format
+        - @accountId:712020:xxx - raw accountId format
+
+        Args:
+            text: Text with mention markers.
+            name_map: Optional mapping of accountId -> display name for raw format.
+
+        Returns a list of ADF content nodes (text and mention nodes).
+        """
+        if name_map is None:
+            name_map = {}
+
+        # Combined pattern: bracket format OR raw accountId format
+        bracket_pat = r"@\[([^\]]+)\]\(([^)]+)\)"
+        raw_pat = r"@(?:accountId:)?((?:\d+:)?[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+        combined = f"(?:{bracket_pat})|(?:{raw_pat})"
+
+        nodes = []
+        last_end = 0
+        for m in re.finditer(combined, text):
+            # Text before this mention
+            if m.start() > last_end:
+                nodes.append({"type": "text", "text": text[last_end:m.start()]})
+
+            if m.group(1) is not None:
+                # Bracket format: @[Name](id)
+                display_name = m.group(1)
+                account_id = m.group(2)
+            else:
+                # Raw format: @accountId:xxx or @xxx
+                account_id = m.group(3)
+                display_name = name_map.get(account_id, "")
+
+            nodes.append({
+                "type": "mention",
+                "attrs": {
+                    "id": account_id,
+                    "text": f"@{display_name}" if display_name else "",
+                    "accessLevel": "",
+                },
+            })
+            last_end = m.end()
+
+        # Remaining text
+        if last_end < len(text):
+            nodes.append({"type": "text", "text": text[last_end:]})
+        return nodes
+
     def add_comment(self, issue_key: str, body_text: str) -> dict:
         """Post a comment to a Jira issue.
 
+        Supports @[Display Name](accountId) syntax for mentions.
+
         Args:
             issue_key: e.g. SAOP-123.
-            body_text: Plain text comment (converted to ADF).
+            body_text: Plain text comment with optional @mentions.
 
         Returns:
             Dict with comment id.
         """
+        # Split into paragraphs and convert each to ADF
+        paragraphs = body_text.split("\n\n") if "\n\n" in body_text else [body_text]
+        adf_content = []
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            nodes = self._parse_mentions(para)
+            if not nodes:
+                nodes = [{"type": "text", "text": para}]
+            adf_content.append({"type": "paragraph", "content": nodes})
+
+        if not adf_content:
+            adf_content = [{"type": "paragraph", "content": [{"type": "text", "text": body_text}]}]
+
         payload = {
             "body": {
                 "type": "doc",
                 "version": 1,
-                "content": [
-                    {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": body_text}],
-                    }
-                ],
+                "content": adf_content,
             }
         }
         resp = self._request(

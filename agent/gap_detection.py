@@ -35,7 +35,9 @@ def _gap_task_exists(db, jira_key: str, gap_prefix: str) -> bool:
 
 
 def _create_gap_task(
-    db, jira_key: str, title: str, priority: str, base_url: str, source: str = "jira_gap"
+    db, jira_key: str, title: str, priority: str, base_url: str,
+    source: str = "jira_gap", assignee: str | None = None,
+    fix_version: str | None = None,
 ) -> Task:
     """Create a gap detection task in the database."""
     task = Task(
@@ -46,6 +48,8 @@ def _create_gap_task(
         auto=True,
         jira_key=jira_key,
         jira_url=f"{base_url}/browse/{jira_key}",
+        jira_assignee=assignee,
+        jira_fix_version=fix_version,
         source=source,
     )
     db.add(task)
@@ -59,6 +63,25 @@ def _resolve_fixed_gaps(db, jira_key: str, gap_prefix: str) -> int:
         .filter(
             Task.jira_key == jira_key,
             Task.title.contains(gap_prefix),
+            Task.done == False,
+        )
+        .all()
+    )
+    count = 0
+    for t in tasks:
+        t.done = True
+        t.updated_at = datetime.utcnow()
+        count += 1
+    return count
+
+
+def _resolve_all_gaps_for_ticket(db, jira_key: str) -> int:
+    """Mark ALL open gap tasks for a ticket as done (e.g. when ticket is Done)."""
+    tasks = (
+        db.query(Task)
+        .filter(
+            Task.jira_key == jira_key,
+            Task.source.in_(["jira_gap", "jira_priority"]),
             Task.done == False,
         )
         .all()
@@ -87,6 +110,9 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
     updated = 0
 
     try:
+        # Track all Jira keys seen in active sprints
+        active_sprint_keys: set[str] = set()
+
         for project in team_projects:
             try:
                 issues = jira_client.get_active_sprint_issues(project)
@@ -96,22 +122,28 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
 
             for issue in issues:
                 key = issue["key"]
+                active_sprint_keys.add(key)
                 fields = issue.get("fields", {})
                 summary = fields.get("summary", "")
                 status_name = fields.get("status", {}).get("name", "")
                 assignee = fields.get("assignee")
-                story_points = fields.get("customfield_10016")
+                assignee_name = (assignee or {}).get("displayName") if assignee else None
+                from agent.jira_client import _get_story_points
+                story_points = _get_story_points(fields)
                 description = fields.get("description")
                 due_date_str = fields.get("duedate")
                 issue_links = fields.get("issuelinks", [])
+                fix_versions = [v.get("name", "") for v in fields.get("fixVersions", [])]
+                fix_version_str = ", ".join(fix_versions) if fix_versions else None
 
-                # 1. Missing story points
-                if story_points is None:
+                # 1. Missing story points (None or 0 treated as missing)
+                has_sp = story_points is not None and story_points > 0
+                if not has_sp:
                     if not _gap_task_exists(db, key, GAP_MISSING_SP):
                         _create_gap_task(
                             db, key,
                             f"[{key}] Missing story points — {summary}",
-                            "p3", base_url,
+                            "p3", base_url, assignee=assignee_name, fix_version=fix_version_str,
                         )
                         created += 1
                 else:
@@ -133,7 +165,7 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                         _create_gap_task(
                             db, key,
                             f"[{key}] Missing AC — {summary}",
-                            "p3", base_url,
+                            "p3", base_url, assignee=assignee_name, fix_version=fix_version_str,
                         )
                         created += 1
                 else:
@@ -148,7 +180,7 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                             _create_gap_task(
                                 db, key,
                                 f"[{key}] No PR found for in-progress ticket — {summary}",
-                                "p3", base_url,
+                                "p3", base_url, assignee=assignee_name,
                             )
                             created += 1
                     else:
@@ -160,7 +192,7 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                         _create_gap_task(
                             db, key,
                             f"[{key}] Unassigned ticket in sprint — {summary}",
-                            "p3", base_url,
+                            "p3", base_url, assignee=assignee_name, fix_version=fix_version_str,
                         )
                         created += 1
                 else:
@@ -174,7 +206,7 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                             _create_gap_task(
                                 db, key,
                                 f"[{key}] Stale ticket — no update in {n_days} days — {summary}",
-                                "p3", base_url,
+                                "p3", base_url, assignee=assignee_name,
                             )
                             created += 1
                     else:
@@ -191,7 +223,7 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                             _create_gap_task(
                                 db, key,
                                 f"[{key}] Blocked with no blocker defined — {summary}",
-                                "p3", base_url,
+                                "p3", base_url, assignee=assignee_name,
                             )
                             created += 1
                     else:
@@ -205,7 +237,7 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                             _create_gap_task(
                                 db, key,
                                 f"[{key}] Overdue — {summary}",
-                                "p3", base_url,
+                                "p3", base_url, assignee=assignee_name,
                             )
                             created += 1
                     else:
@@ -221,9 +253,11 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                             _create_gap_task(
                                 db, key,
                                 f"[{key}] Mid-sprint addition — {summary}",
-                                "p3", base_url,
+                                "p3", base_url, assignee=assignee_name,
                             )
                             created += 1
+                    else:
+                        updated += _resolve_fixed_gaps(db, key, GAP_MID_SPRINT)
 
                 # 9. Backlog aging (no activity > 30 days)
                 updated_str = fields.get("updated", "")
@@ -235,9 +269,27 @@ def run_gap_detection(jira_client, team_projects: list[str], base_url: str) -> d
                             _create_gap_task(
                                 db, key,
                                 f"[{key}] Aging backlog ticket — {summary}",
-                                "p4", base_url,
+                                "p4", base_url, assignee=assignee_name, fix_version=fix_version_str,
                             )
                             created += 1
+                    else:
+                        updated += _resolve_fixed_gaps(db, key, GAP_AGING)
+                elif status_name.lower() not in ["to do", "backlog", "open"]:
+                    # Ticket moved out of backlog, resolve aging gaps
+                    updated += _resolve_fixed_gaps(db, key, GAP_AGING)
+
+        # Cleanup: close all gap tasks for tickets no longer in any active sprint
+        open_gap_tasks = (
+            db.query(Task)
+            .filter(Task.source == "jira_gap", Task.done == False, Task.jira_key.isnot(None))
+            .all()
+        )
+        for t in open_gap_tasks:
+            if t.jira_key not in active_sprint_keys:
+                t.done = True
+                t.updated_at = datetime.utcnow()
+                updated += 1
+                logger.info(f"Auto-closed gap task for {t.jira_key} (no longer in active sprint)")
 
         db.commit()
 
@@ -297,7 +349,7 @@ def sync_priority_labels(jira_client, team_projects: list[str], base_url: str) -
             f"AND status != Done "
             f"ORDER BY priority ASC"
         )
-        fields = ["summary", "status", "labels", "assignee"]
+        fields = ["summary", "status", "labels", "assignee", "fixVersions"]
         issues = jira_client.search_issues(jql, fields)
 
         # Track which jira keys are still active with p1/p2 labels
@@ -317,6 +369,9 @@ def sync_priority_labels(jira_client, team_projects: list[str], base_url: str) -
             else:
                 continue
 
+            assignee_name = (f.get("assignee") or {}).get("displayName") if f.get("assignee") else None
+            fix_versions = [v.get("name", "") for v in f.get("fixVersions", [])]
+            fix_version_str = ", ".join(fix_versions) if fix_versions else None
             active_keys[key] = priority
 
             # Check for existing task
@@ -332,6 +387,12 @@ def sync_priority_labels(jira_client, team_projects: list[str], base_url: str) -
                     existing.priority = priority
                     existing.updated_at = datetime.utcnow()
                     updated += 1
+                # Update assignee if changed
+                if existing.jira_assignee != assignee_name:
+                    existing.jira_assignee = assignee_name
+                # Update fix version if changed
+                if existing.jira_fix_version != fix_version_str:
+                    existing.jira_fix_version = fix_version_str
             else:
                 # Also check if there's already a done one from today (avoid re-creating)
                 task = Task(
@@ -342,6 +403,8 @@ def sync_priority_labels(jira_client, team_projects: list[str], base_url: str) -
                     auto=True,
                     jira_key=key,
                     jira_url=f"{base_url}/browse/{key}",
+                    jira_assignee=assignee_name,
+                    jira_fix_version=fix_version_str,
                     source="jira_priority",
                 )
                 db.add(task)

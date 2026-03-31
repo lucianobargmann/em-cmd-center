@@ -257,13 +257,14 @@ async def suggest_comment(task_id: str):
             logger.info(f"[Duke] suggest-comment: ticket loaded — {detail.get('summary', '')}")
             await asyncio.sleep(0)
 
-            yield sse("step", {"step": "Reading comments..."})
+            yield sse("step", {"step": "Reading comments and history..."})
             comments = client.get_issue_comments(jira_key)
-            logger.info(f"[Duke] suggest-comment: {len(comments)} comments found")
+            days_in_status = client.get_days_in_current_status(jira_key)
+            logger.info(f"[Duke] suggest-comment: {len(comments)} comments, {days_in_status}d in status")
             await asyncio.sleep(0)
 
             yield sse("step", {"step": f"Found {len(comments)} comment(s). Building context..."})
-            write_context_file(jira_key, detail, comments)
+            write_context_file(jira_key, detail, comments, days_in_status=days_in_status)
             logger.info(f"[Duke] suggest-comment: context file written")
             await asyncio.sleep(0)
 
