@@ -11,6 +11,12 @@ let currentWeekStart = null;
 let developers = [];
 let activeTab = 'tasks';
 
+// Status Board state
+let sbData = null;
+let sbPage = 1;
+let sbSortBy = 'current_status_age';
+let sbSortDir = 'desc';
+
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
     setHeaderDate();
@@ -85,9 +91,13 @@ function setupListeners() {
         e.target.classList.add('active');
         document.getElementById('tasks-view').style.display = tab === 'tasks' ? '' : 'none';
         document.getElementById('metrics-view').style.display = tab === 'metrics' ? '' : 'none';
+        document.getElementById('status-board-view').style.display = tab === 'status-board' ? '' : 'none';
         if (tab === 'metrics' && !metricsData) {
             loadMetrics();
             loadDevelopers();
+        }
+        if (tab === 'status-board' && !sbData) {
+            loadStatusBoard();
         }
     });
 
@@ -183,6 +193,19 @@ function setupListeners() {
         if (!e.target.closest('.picker-wrapper')) {
             closeAllPickers();
         }
+    });
+
+    // Status Board
+    document.getElementById('btn-sb-refresh').addEventListener('click', refreshStatusBoard);
+    document.getElementById('btn-sb-retry').addEventListener('click', loadStatusBoard);
+    document.getElementById('btn-sb-sync-now').addEventListener('click', refreshStatusBoard);
+    document.getElementById('sb-filter-project').addEventListener('change', () => { sbPage = 1; loadStatusBoard(); });
+    document.getElementById('sb-filter-priority').addEventListener('change', () => { sbPage = 1; loadStatusBoard(); });
+    document.getElementById('sb-filter-assignee').addEventListener('change', () => { sbPage = 1; loadStatusBoard(); });
+    let sbSearchTimeout;
+    document.getElementById('sb-search').addEventListener('input', (e) => {
+        clearTimeout(sbSearchTimeout);
+        sbSearchTimeout = setTimeout(() => { sbPage = 1; loadStatusBoard(); }, 300);
     });
 }
 
@@ -2010,5 +2033,320 @@ async function removeDeveloper(devId) {
         renderRoster();
     } catch (e) {
         console.error('Failed to remove developer:', e);
+    }
+}
+
+// ---- Status Board ----
+
+function formatDuration(seconds) {
+    if (seconds == null || seconds < 0) return '--';
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    return `${days}d ${hours}h`;
+}
+
+function durationColorClass(seconds) {
+    if (seconds == null) return '';
+    const days = seconds / 86400;
+    if (days < 3) return 'sb-green';
+    if (days < 7) return 'sb-amber';
+    return 'sb-red';
+}
+
+async function loadStatusBoard() {
+    const loading = document.getElementById('sb-loading');
+    const error = document.getElementById('sb-error');
+    const empty = document.getElementById('sb-empty');
+    const cards = document.getElementById('sb-summary-cards');
+    const groups = document.getElementById('sb-groups');
+    const pagination = document.getElementById('sb-pagination');
+
+    loading.style.display = '';
+    error.style.display = 'none';
+    empty.style.display = 'none';
+    cards.innerHTML = '';
+    groups.innerHTML = '';
+    pagination.innerHTML = '';
+
+    const params = new URLSearchParams();
+    const project = document.getElementById('sb-filter-project').value;
+    const priority = document.getElementById('sb-filter-priority').value;
+    const assignee = document.getElementById('sb-filter-assignee').value;
+    const search = document.getElementById('sb-search').value.trim();
+    if (project) params.set('project', project);
+    if (priority) params.set('priority', priority);
+    if (assignee) params.set('assignee', assignee);
+    if (search) params.set('search', search);
+    params.set('page', sbPage);
+    params.set('sort_by', sbSortBy);
+    params.set('sort_dir', sbSortDir);
+
+    try {
+        const resp = await fetch(`/api/status-board/dashboard?${params}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        sbData = await resp.json();
+        loading.style.display = 'none';
+
+        if (sbData.total_tickets === 0) {
+            empty.style.display = '';
+            return;
+        }
+
+        renderSBCards(sbData.cards);
+        renderSBGroups(sbData.groups, sbData.statuses);
+        renderSBPagination(sbData.total_tickets, sbData.page, sbData.page_size);
+        populateSBFilters(sbData);
+
+        // Update last synced
+        const syncEl = document.getElementById('sb-last-synced');
+        if (sbData.last_synced) {
+            const ago = timeAgo(new Date(sbData.last_synced));
+            syncEl.textContent = `Last synced: ${ago}`;
+            // Warning if > 1 hour
+            const ms = Date.now() - new Date(sbData.last_synced).getTime();
+            syncEl.style.color = ms > 3600000 ? 'var(--amber)' : '';
+        } else {
+            syncEl.textContent = 'Never synced';
+            syncEl.style.color = 'var(--amber)';
+        }
+    } catch (e) {
+        loading.style.display = 'none';
+        error.style.display = '';
+        document.getElementById('sb-error-msg').textContent = e.message;
+    }
+}
+
+function timeAgo(date) {
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+}
+
+function renderSBCards(cards) {
+    const container = document.getElementById('sb-summary-cards');
+    container.innerHTML = cards.map(c => `
+        <div class="sb-card">
+            <div class="sb-card-status">${escapeHtml(c.status)}</div>
+            <div class="sb-card-row">
+                <span class="sb-card-label">Open avg</span>
+                <span class="sb-card-value ${durationColorClass(c.open_avg_seconds)}">${formatDuration(c.open_avg_seconds)}</span>
+            </div>
+            <div class="sb-card-row">
+                <span class="sb-card-label">Closed avg</span>
+                <span class="sb-card-value sb-muted">${formatDuration(c.closed_avg_seconds)}</span>
+            </div>
+            <div class="sb-card-sublabel">4-week rolling</div>
+        </div>
+    `).join('');
+}
+
+function renderSBGroups(groups, statuses) {
+    const container = document.getElementById('sb-groups');
+    container.innerHTML = groups.map(g => {
+        const label = g.assignee_type === 'non_roster' ? '<span class="sb-assignee-label">Assigned but not in roster</span>' :
+                      g.assignee_type === 'unassigned' ? '<span class="sb-assignee-label">No Jira assignee</span>' : '';
+        return `
+        <div class="sb-group">
+            <div class="sb-group-header" onclick="toggleSBGroup(this)">
+                <span class="sb-chevron">&#9660;</span>
+                <span class="sb-group-name">${escapeHtml(g.assignee_name)}</span>
+                <span class="sb-group-count">${g.ticket_count} ticket${g.ticket_count !== 1 ? 's' : ''}</span>
+                ${label}
+            </div>
+            <table class="sb-table">
+                <thead><tr>
+                    <th style="width:90px" onclick="sbSort('issue_key')">Key</th>
+                    <th onclick="sbSort('summary')">Summary</th>
+                    <th style="width:55px" onclick="sbSort('priority')">Pri</th>
+                    <th style="width:60px" onclick="sbSort('project_key')">Proj</th>
+                    <th style="width:90px" onclick="sbSort('current_status')">Status</th>
+                    ${statuses.map(s => `<th class="sb-time-header" onclick="sbSort('status_time_${escapeHtml(s)}')">${escapeHtml(s)}</th>`).join('')}
+                </tr></thead>
+                <tbody>
+                    ${g.tickets.map(t => renderSBTicketRow(t, statuses)).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    }).join('');
+}
+
+function renderSBTicketRow(t, statuses) {
+    const jiraUrl = t.jira_url || '#';
+    const priBadge = priorityToBadge(t.priority);
+    return `
+        <tr class="sb-ticket-row" data-key="${escapeHtml(t.issue_key)}">
+            <td><a class="sb-ticket-key" href="${jiraUrl}" target="_blank" onclick="event.stopPropagation()">${escapeHtml(t.issue_key)}</a></td>
+            <td class="sb-ticket-summary" onclick="toggleSBDetail('${escapeHtml(t.issue_key)}')">${escapeHtml(t.summary)}</td>
+            <td>${priBadge}</td>
+            <td><span class="sb-badge-project">${escapeHtml(t.project_key)}</span></td>
+            <td><span class="sb-badge-status">${escapeHtml(t.current_status)}</span></td>
+            ${statuses.map(s => {
+                const sec = t.status_times[s];
+                const isCurrent = s === t.current_status;
+                if (sec == null && !isCurrent) return '<td class="sb-time-cell sb-empty-cell">--</td>';
+                const val = isCurrent ? t.current_status_seconds : sec;
+                const color = durationColorClass(val);
+                const currentCls = isCurrent ? ' sb-current' : '';
+                return `<td class="sb-time-cell ${color}${currentCls}">${formatDuration(val)}</td>`;
+            }).join('')}
+        </tr>
+        <tr class="sb-detail-row" id="sb-detail-${t.issue_key.replace(/[^a-zA-Z0-9-]/g, '_')}" style="display:none">
+            <td colspan="${5 + statuses.length}">
+                <div class="sb-detail-inner" id="sb-detail-inner-${t.issue_key.replace(/[^a-zA-Z0-9-]/g, '_')}">
+                    <em>Loading transitions...</em>
+                </div>
+            </td>
+        </tr>`;
+}
+
+function priorityToBadge(priority) {
+    if (!priority) return '';
+    const p = priority.toLowerCase();
+    let cls = 'sb-badge-pri';
+    if (p === 'highest' || p === 'p1') cls += ' badge-p1';
+    else if (p === 'high' || p === 'p2') cls += ' badge-p2';
+    else if (p === 'medium' || p === 'p3') cls += ' badge-p3';
+    else cls += ' badge-p4';
+    return `<span class="${cls}">${escapeHtml(priority)}</span>`;
+}
+
+function toggleSBGroup(header) {
+    const table = header.nextElementSibling;
+    const chevron = header.querySelector('.sb-chevron');
+    if (table.style.display === 'none') {
+        table.style.display = '';
+        chevron.classList.remove('sb-collapsed');
+    } else {
+        table.style.display = 'none';
+        chevron.classList.add('sb-collapsed');
+    }
+}
+
+async function toggleSBDetail(issueKey) {
+    const safeKey = issueKey.replace(/[^a-zA-Z0-9-]/g, '_');
+    const row = document.getElementById(`sb-detail-${safeKey}`);
+    const inner = document.getElementById(`sb-detail-inner-${safeKey}`);
+    if (!row) return;
+
+    if (row.style.display === 'none') {
+        row.style.display = '';
+        // Mark the ticket row as expanded
+        row.previousElementSibling.classList.add('sb-expanded');
+        // Fetch transitions
+        try {
+            const resp = await fetch(`/api/status-board/ticket/${encodeURIComponent(issueKey)}/transitions`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            inner.innerHTML = renderTransitionTable(data.transitions, issueKey);
+        } catch (e) {
+            inner.innerHTML = `<span style="color:var(--red)">Failed to load: ${escapeHtml(e.message)}</span>`;
+        }
+    } else {
+        row.style.display = 'none';
+        row.previousElementSibling.classList.remove('sb-expanded');
+    }
+}
+
+function renderTransitionTable(transitions, issueKey) {
+    if (!transitions || transitions.length === 0) {
+        return '<em>No status transitions recorded</em>';
+    }
+    const jiraUrl = `https://ninjio.atlassian.net/browse/${issueKey}`;
+    let rows = transitions.map((t, i) => {
+        const isCurrent = i === transitions.length - 1 && !t.exited_at;
+        const marker = isCurrent ? '<span class="sb-current-marker"></span>' : '';
+        const durColor = isCurrent ? durationColorClass(t.duration_seconds) : '';
+        return `<tr>
+            <td>${marker}${escapeHtml(t.status)}</td>
+            <td>${escapeHtml(t.entered_at || '--')}</td>
+            <td>${t.exited_at ? escapeHtml(t.exited_at) : '<em>now</em>'}</td>
+            <td class="${durColor}">${formatDuration(t.duration_seconds)}</td>
+        </tr>`;
+    }).join('');
+    return `
+        <h4>Status Transition History</h4>
+        <table class="sb-transition-table">
+            <thead><tr><th>Status</th><th>Entered</th><th>Exited</th><th>Duration</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table>
+        <div class="sb-detail-footer">
+            <a href="${jiraUrl}" target="_blank">Open in Jira &#8599;</a>
+        </div>`;
+}
+
+function renderSBPagination(total, page, pageSize) {
+    const container = document.getElementById('sb-pagination');
+    const totalPages = Math.ceil(total / pageSize);
+    if (totalPages <= 1) { container.innerHTML = ''; return; }
+    container.innerHTML = `
+        <button ${page <= 1 ? 'disabled' : ''} onclick="sbGoPage(${page - 1})">&laquo; Prev</button>
+        <span class="sb-page-info">Page ${page} of ${totalPages} (${total} tickets)</span>
+        <button ${page >= totalPages ? 'disabled' : ''} onclick="sbGoPage(${page + 1})">Next &raquo;</button>`;
+}
+
+function sbGoPage(p) {
+    sbPage = p;
+    loadStatusBoard();
+}
+
+function sbSort(field) {
+    if (sbSortBy === field) {
+        sbSortDir = sbSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        sbSortBy = field;
+        sbSortDir = 'desc';
+    }
+    loadStatusBoard();
+}
+
+function populateSBFilters(data) {
+    // Populate project filter
+    const projSelect = document.getElementById('sb-filter-project');
+    if (projSelect.options.length <= 1) {
+        const projects = [...new Set(data.groups.flatMap(g => g.tickets.map(t => t.project_key)))].sort();
+        projects.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p;
+            opt.textContent = p;
+            projSelect.appendChild(opt);
+        });
+    }
+    // Populate assignee filter
+    const assSelect = document.getElementById('sb-filter-assignee');
+    if (assSelect.options.length <= 1) {
+        const assignees = data.groups
+            .filter(g => g.assignee_type === 'roster')
+            .map(g => g.assignee_name)
+            .sort();
+        assignees.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = a;
+            opt.textContent = a;
+            assSelect.appendChild(opt);
+        });
+    }
+}
+
+async function refreshStatusBoard() {
+    const btn = document.getElementById('btn-sb-refresh');
+    btn.disabled = true;
+    btn.textContent = 'Syncing...';
+    try {
+        const resp = await fetch('/api/status-board/refresh', { method: 'POST' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        // Wait a bit for sync to start, then poll
+        setTimeout(async () => {
+            await loadStatusBoard();
+            btn.disabled = false;
+            btn.textContent = 'Refresh';
+        }, 3000);
+    } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Refresh';
+        alert('Refresh failed: ' + e.message);
     }
 }

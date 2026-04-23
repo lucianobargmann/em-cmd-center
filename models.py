@@ -286,3 +286,66 @@ class WeeklyTeamSummary(Base):
             "defects_low": self.defects_low,
             "defects_lowest": self.defects_lowest,
         }
+
+
+class TicketStatusCache(Base):
+    """Cached current state of every tracked Jira ticket for the Status Board."""
+
+    __tablename__ = "ticket_status_cache"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    issue_key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    project_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    priority: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    assignee_account_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    assignee_display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    current_status: Mapped[str] = mapped_column(String(100), nullable=False)
+    status_entered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    issue_created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "issue_key": self.issue_key,
+            "project_key": self.project_key,
+            "summary": self.summary,
+            "priority": self.priority,
+            "assignee_account_id": self.assignee_account_id,
+            "assignee_display_name": self.assignee_display_name,
+            "current_status": self.current_status,
+            "status_entered_at": self.status_entered_at.isoformat() if self.status_entered_at else None,
+            "issue_created_at": self.issue_created_at.isoformat() if self.issue_created_at else None,
+            "resolved": self.resolved,
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+            "last_synced_at": self.last_synced_at.isoformat() if self.last_synced_at else None,
+        }
+
+
+class TicketStatusHistory(Base):
+    """Individual status transitions for a Jira ticket."""
+
+    __tablename__ = "ticket_status_history"
+    __table_args__ = (
+        UniqueConstraint("issue_key", "transitioned_at", "to_status", name="uq_ticket_transition"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    issue_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    to_status: Mapped[str] = mapped_column(String(100), nullable=False)
+    transitioned_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    time_in_from_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "issue_key": self.issue_key,
+            "from_status": self.from_status,
+            "to_status": self.to_status,
+            "transitioned_at": self.transitioned_at.isoformat() if self.transitioned_at else None,
+            "time_in_from_seconds": self.time_in_from_seconds,
+        }

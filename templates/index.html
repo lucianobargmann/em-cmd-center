@@ -25,6 +25,7 @@
         <div class="nav-tabs" id="nav-tabs">
             <button class="nav-tab active" data-tab="tasks">Tasks</button>
             <button class="nav-tab" data-tab="metrics">Metrics</button>
+            <button class="nav-tab" data-tab="status-board">Status Board</button>
         </div>
 
         <!-- ===== Tasks View ===== -->
@@ -176,6 +177,68 @@
                     <div class="card-header">Cycle &amp; Lead Time Detail</div>
                     <div class="card-body" id="detail-table-container"></div>
                 </div>
+            </div>
+        </div>
+
+        <!-- ===== Status Board View ===== -->
+        <div id="status-board-view" style="display:none">
+            <!-- Filter bar -->
+            <div class="sb-filter-bar">
+                <label>Project</label>
+                <select id="sb-filter-project">
+                    <option value="">All Projects</option>
+                </select>
+                <label>Priority</label>
+                <select id="sb-filter-priority">
+                    <option value="">All</option>
+                    <option value="Highest">Highest</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                    <option value="Lowest">Lowest</option>
+                </select>
+                <label>Assignee</label>
+                <select id="sb-filter-assignee">
+                    <option value="">All Assignees</option>
+                </select>
+                <input type="text" id="sb-search" placeholder="Search key, summary, or assignee..." />
+                <button class="btn-sb-refresh" id="btn-sb-refresh">Refresh</button>
+                <span class="sb-last-synced" id="sb-last-synced"></span>
+            </div>
+
+            <!-- Summary cards -->
+            <div class="sb-summary-cards" id="sb-summary-cards"></div>
+
+            <!-- Ticket groups -->
+            <div class="sb-groups" id="sb-groups"></div>
+
+            <!-- Pagination -->
+            <div class="sb-pagination" id="sb-pagination"></div>
+
+            <!-- Loading state -->
+            <div class="sb-loading" id="sb-loading" style="display:none">
+                <div class="skeleton" style="height:80px;border-radius:8px;margin-bottom:10px;"></div>
+                <div class="skeleton" style="height:80px;border-radius:8px;margin-bottom:10px;"></div>
+                <div class="skeleton" style="height:80px;border-radius:8px;margin-bottom:10px;"></div>
+                <div class="skeleton" style="height:40px;border-radius:8px;margin-bottom:8px;margin-top:20px;"></div>
+                <div class="skeleton" style="height:36px;border-radius:4px;margin-bottom:4px;"></div>
+                <div class="skeleton" style="height:36px;border-radius:4px;margin-bottom:4px;"></div>
+                <div class="skeleton" style="height:36px;border-radius:4px;margin-bottom:4px;"></div>
+            </div>
+
+            <!-- Error state -->
+            <div class="sb-error" id="sb-error" style="display:none">
+                <h3>Failed to load ticket data</h3>
+                <p id="sb-error-msg"></p>
+                <button class="btn-sb-retry" id="btn-sb-retry">Retry</button>
+            </div>
+
+            <!-- Empty state -->
+            <div class="sb-empty" id="sb-empty" style="display:none">
+                <div style="font-size:40px;opacity:0.5;margin-bottom:12px;">&#128203;</div>
+                <h3>No open tickets found</h3>
+                <p>There are no unresolved tickets, or data hasn't been synced yet.</p>
+                <button class="btn-sb-refresh" id="btn-sb-sync-now" style="margin-top:16px;">Sync Now</button>
             </div>
         </div>
     </div>

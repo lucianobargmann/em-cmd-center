@@ -16,6 +16,7 @@ from agent.infra_costs import run_infra_cost_check
 from agent.jira_client import JiraClient
 from agent.metrics_collector import collect_weekly_metrics
 from agent.stack_rank import run_stack_rank
+from agent.status_sync import sync_ticket_statuses
 from database import get_db
 from models import AgentRun, Task
 
@@ -216,6 +217,14 @@ def _run_git_fetch_and_metrics(config: dict) -> None:
         logger.error(f"Metrics collection (git fetch job) failed: {e}")
 
 
+def _run_status_sync(config: dict) -> None:
+    """Run the ticket status sync job."""
+    try:
+        sync_ticket_statuses(config)
+    except Exception as e:
+        logger.error(f"Ticket status sync failed: {e}")
+
+
 def _run_slack_sp_reminders(config: dict) -> None:
     """Run the Slack story point reminder job."""
     try:
@@ -366,6 +375,15 @@ def setup_scheduler(config: dict) -> BackgroundScheduler:
             id="slack_sp_reminder",
             name="Slack SP reminder DMs",
         )
+
+    # Ticket status sync (every 15 minutes)
+    scheduler.add_job(
+        _run_status_sync,
+        IntervalTrigger(minutes=15),
+        args=[config],
+        id="status_sync",
+        name="Ticket status sync",
+    )
 
     scheduler.start()
     logger.info("Scheduler started with %d jobs", len(scheduler.get_jobs()))

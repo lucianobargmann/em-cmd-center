@@ -21,6 +21,8 @@ from api.goals import set_goals_config
 from api.metrics import router as metrics_router
 from api.metrics import set_metrics_config
 from api.reports import router as reports_router
+from api.status_board import router as status_board_router
+from api.status_board import set_status_board_config
 from api.task_actions import router as task_actions_router
 from api.tasks import router as tasks_router
 from config import CONFIG
@@ -42,6 +44,7 @@ async def lifespan(app: FastAPI):
     set_config(CONFIG)
     set_goals_config(CONFIG)
     set_metrics_config(CONFIG)
+    set_status_board_config(CONFIG)
 
     from agent.scheduler import setup_scheduler
     scheduler = setup_scheduler(CONFIG)
@@ -68,6 +71,7 @@ app.include_router(agent_router)
 app.include_router(goals_router)
 app.include_router(reports_router)
 app.include_router(metrics_router)
+app.include_router(status_board_router)
 
 
 @app.get("/", response_class=HTMLResponse)
