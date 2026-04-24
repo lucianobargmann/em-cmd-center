@@ -55,6 +55,7 @@
             <div class="goals-section" id="goals-section">
                 <div class="goals-header">
                     <span class="goals-week-label" id="goals-week-label">CTO Goals</span>
+                    <button class="btn-goal-history" id="btn-goal-history">History</button>
                     <button class="btn-add-goal" id="btn-add-goal">+ Goal</button>
                 </div>
                 <div class="goals-list" id="goals-list"></div>
@@ -270,6 +271,11 @@
                 <input type="text" id="goal-title-input" placeholder="Goal title..." autocomplete="off">
                 <label>Description</label>
                 <textarea id="goal-desc-input" rows="3" placeholder="Details..."></textarea>
+                <label>% Complete</label>
+                <div class="goal-pct-row">
+                    <input type="range" id="goal-pct-input" min="0" max="100" step="5" value="0">
+                    <span id="goal-pct-label">0%</span>
+                </div>
                 <label>Add Progress Note</label>
                 <input type="text" id="goal-notes-input" placeholder="Add a progress note...">
                 <div class="notes-history" id="goal-notes-history"></div>

@@ -72,6 +72,7 @@ class Goal(Base):
     jira_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
     jira_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    percent_complete: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -100,6 +101,7 @@ class Goal(Base):
             "jira_key": self.jira_key,
             "jira_url": self.jira_url,
             "sort_order": self.sort_order,
+            "percent_complete": self.percent_complete or 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -285,6 +287,44 @@ class WeeklyTeamSummary(Base):
             "defects_medium": self.defects_medium,
             "defects_low": self.defects_low,
             "defects_lowest": self.defects_lowest,
+        }
+
+
+class WeeklyProjectSummary(Base):
+    """Per-project weekly metrics summary."""
+    __tablename__ = "weekly_project_summary"
+    __table_args__ = (
+        UniqueConstraint("week_start", "project_key", name="uq_projsummary_week_proj"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    week_start: Mapped[date] = mapped_column(Date, nullable=False)
+    project_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    issues_resolved: Mapped[int] = mapped_column(Integer, default=0)
+    tickets_closed: Mapped[int] = mapped_column(Integer, default=0)
+    sp_closed: Mapped[int] = mapped_column(Integer, default=0)
+    avg_cycle_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    avg_lead_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    median_cycle_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    median_lead_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p85_cycle_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p85_lead_time: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "week_start": self.week_start.isoformat() if self.week_start else None,
+            "project_key": self.project_key,
+            "issues_resolved": self.issues_resolved,
+            "tickets_closed": self.tickets_closed,
+            "sp_closed": self.sp_closed,
+            "avg_cycle_time": self.avg_cycle_time,
+            "avg_lead_time": self.avg_lead_time,
+            "median_cycle_time": self.median_cycle_time,
+            "median_lead_time": self.median_lead_time,
+            "p85_cycle_time": self.p85_cycle_time,
+            "p85_lead_time": self.p85_lead_time,
         }
 
 

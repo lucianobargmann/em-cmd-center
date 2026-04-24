@@ -477,6 +477,32 @@ body {
 
 .btn-add-goal:hover { background: var(--bg); border-color: var(--accent); }
 
+.btn-goal-history {
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.btn-goal-history:hover { border-color: var(--text-secondary); }
+
+.goal-drag-handle {
+    cursor: grab;
+    color: var(--text-secondary);
+    font-size: 12px;
+    opacity: 0.4;
+    flex-shrink: 0;
+    user-select: none;
+    padding: 0 2px;
+    transition: opacity 0.15s;
+}
+.goal-drag-handle:hover { opacity: 1; }
+.goal-row.dragging { opacity: 0.4; }
+.goal-row.drag-over { border-top: 2px solid var(--accent); }
+
 .goal-row {
     display: flex;
     align-items: center;
@@ -488,6 +514,31 @@ body {
 
 .goal-row:hover { background: var(--bg); }
 .goal-row:hover .btn-delete { opacity: 1; }
+
+.goal-pct {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    flex-shrink: 0;
+    min-width: 28px;
+    text-align: right;
+}
+
+.goal-pct-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.goal-pct-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+}
+.goal-pct-row span {
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 36px;
+    color: var(--accent);
+}
 
 .goal-status-icon {
     cursor: pointer;

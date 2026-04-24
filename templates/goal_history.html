@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Goal History - EM Command Center</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .history-container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 24px 16px;
+        }
+        .history-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .history-header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 0;
+            flex: 1;
+        }
+        .btn-back {
+            padding: 5px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--text-secondary);
+            font-size: 13px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: border-color 0.15s;
+        }
+        .btn-back:hover { border-color: var(--text-secondary); }
+        .history-list {
+            display: flex;
+            flex-direction: column;
+        }
+        .history-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        .history-row:last-child { border-bottom: none; }
+        .history-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .history-title {
+            font-size: 14px;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .history-meta {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+        .history-notes {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .history-status {
+            flex-shrink: 0;
+        }
+        .btn-reopen {
+            padding: 4px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            background: var(--bg);
+            color: var(--accent);
+            font-size: 12px;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: border-color 0.15s;
+        }
+        .btn-reopen:hover { border-color: var(--accent); }
+        .btn-reopen:disabled { opacity: 0.5; cursor: default; }
+        .empty-state {
+            color: var(--text-secondary);
+            text-align: center;
+            padding: 40px 0;
+            font-size: 14px;
+        }
+        .loading { text-align: center; padding: 40px 0; color: var(--text-secondary); }
+    </style>
+</head>
+<body>
+    <div class="history-container">
+        <div class="history-header">
+            <a href="/" class="btn-back">&larr; Back</a>
+            <h1>Goal History</h1>
+        </div>
+        <div class="history-list" id="history-list">
+            <div class="loading">Loading...</div>
+        </div>
+    </div>
+
+    <script>
+        function escapeHtml(str) {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+
+        async function loadHistory() {
+            const list = document.getElementById('history-list');
+            try {
+                const resp = await fetch('/api/goals/history');
+                const goals = await resp.json();
+
+                if (goals.length === 0) {
+                    list.innerHTML = '<div class="empty-state">No completed or archived goals yet.</div>';
+                    return;
+                }
+
+                let html = '';
+                for (const g of goals) {
+                    const updated = g.updated_at
+                        ? new Date(g.updated_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                        : '';
+                    const weekOf = g.week_start
+                        ? new Date(g.week_start + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                        : '';
+                    const statusLabel = g.status === 'completed' ? 'Completed' : 'Archived';
+                    const statusClass = g.status === 'completed' ? 'badge-status-done' : 'badge-status-open';
+                    const notes = g.progress_notes || [];
+                    const latestNote = notes.length > 0 ? notes[0].text : '';
+
+                    html += '<div class="history-row">';
+                    html += '<div class="history-info">';
+                    html += '<div class="history-title">' + escapeHtml(g.title) + '</div>';
+                    html += '<div class="history-meta">Week of ' + weekOf + ' &middot; ' + updated + '</div>';
+                    if (latestNote) {
+                        html += '<div class="history-notes">' + escapeHtml(latestNote) + '</div>';
+                    }
+                    html += '</div>';
+                    html += '<span class="badge-status history-status ' + statusClass + '">' + statusLabel + '</span>';
+                    html += '<button class="btn-reopen" onclick="reopenGoal(\'' + g.id + '\', this)">Reopen</button>';
+                    html += '</div>';
+                }
+                list.innerHTML = html;
+            } catch (e) {
+                list.innerHTML = '<div class="empty-state" style="color:var(--red)">Failed to load goal history.</div>';
+                console.error('Goal history error:', e);
+            }
+        }
+
+        async function reopenGoal(goalId, btn) {
+            btn.disabled = true;
+            btn.textContent = 'Reopening...';
+            try {
+                const resp = await fetch('/api/goals/' + goalId, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'active' }),
+                });
+                if (resp.ok) {
+                    btn.closest('.history-row').remove();
+                    const remaining = document.querySelectorAll('.history-row');
+                    if (remaining.length === 0) {
+                        document.getElementById('history-list').innerHTML =
+                            '<div class="empty-state">No completed or archived goals yet.</div>';
+                    }
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = 'Reopen';
+                }
+            } catch (e) {
+                btn.disabled = false;
+                btn.textContent = 'Reopen';
+                console.error('Failed to reopen goal:', e);
+            }
+        }
+
+        loadHistory();
+    </script>
+</body>
+</html>

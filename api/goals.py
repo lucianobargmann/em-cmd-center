@@ -76,6 +76,7 @@ class GoalUpdate(BaseModel):
     status: str | None = None  # active, completed, archived
     progress_note: str | None = None  # new note to prepend
     sort_order: int | None = None
+    percent_complete: int | None = None
 
 
 # ---- Endpoints ----
@@ -112,6 +113,23 @@ def list_goals(week_start: str | None = None) -> list[dict]:
         db.close()
 
 
+@router.get("/history")
+def list_goal_history() -> list[dict]:
+    """List completed and archived goals (most recent first)."""
+    db = get_db()
+    try:
+        goals = (
+            db.query(Goal)
+            .filter(Goal.status.in_(["completed", "archived"]))
+            .order_by(Goal.updated_at.desc())
+            .limit(100)
+            .all()
+        )
+        return [g.to_dict() for g in goals]
+    finally:
+        db.close()
+
+
 @router.post("")
 def create_goal(body: GoalCreate) -> dict:
     """Create a new goal and sync to Jira.
@@ -133,11 +151,16 @@ def create_goal(body: GoalCreate) -> dict:
         if body.progress_note:
             progress_notes = _append_progress_note(None, body.progress_note)
 
+        # Place new goal at end of list
+        from sqlalchemy import func
+        max_order = db.query(func.max(Goal.sort_order)).scalar() or 0
+
         goal = Goal(
             title=body.title,
             description=body.description,
             week_start=ws,
             progress_notes=progress_notes,
+            sort_order=max_order + 1,
         )
 
         # Sync to Jira

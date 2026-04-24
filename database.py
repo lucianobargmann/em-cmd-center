@@ -11,7 +11,11 @@ from models import Base
 logger = logging.getLogger(__name__)
 
 DB_PATH = Path(__file__).parent / "tasks.db"
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False)
+engine = create_engine(
+    f"sqlite:///{DB_PATH}",
+    echo=False,
+    connect_args={"timeout": 30},
+)
 SessionLocal = sessionmaker(bind=engine)
 
 
@@ -26,6 +30,9 @@ def _migrate_add_columns() -> None:
         ("weekly_team_summary", "defects_medium", "INTEGER DEFAULT 0"),
         ("weekly_team_summary", "defects_low", "INTEGER DEFAULT 0"),
         ("weekly_team_summary", "defects_lowest", "INTEGER DEFAULT 0"),
+        ("tasks", "jira_status", "VARCHAR(100)"),
+        ("tasks", "jira_fix_version_date", "VARCHAR(20)"),
+        ("goals", "percent_complete", "INTEGER DEFAULT 0"),
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -40,6 +47,9 @@ def _migrate_add_columns() -> None:
 
 def init_db() -> None:
     """Create all tables if they don't exist."""
+    with engine.connect() as conn:
+        conn.execute(text("PRAGMA journal_mode=WAL"))
+        conn.commit()
     Base.metadata.create_all(engine)
     _migrate_add_columns()
 

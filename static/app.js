@@ -72,6 +72,9 @@ function setupListeners() {
     document.getElementById('btn-copy-report').addEventListener('click', copyReport);
 
     // Goals
+    document.getElementById('btn-goal-history').addEventListener('click', () => {
+        window.location.href = '/goals/history';
+    });
     document.getElementById('btn-add-goal').addEventListener('click', () => openGoalModal());
     document.getElementById('goal-modal-close').addEventListener('click', () => {
         document.getElementById('goal-modal').classList.remove('active');
@@ -345,12 +348,15 @@ function renderGoals() {
     const label = document.getElementById('goals-week-label');
     list.innerHTML = '';
 
+    const activeGoals = goals.filter(g => g.status !== 'archived');
+    const count = activeGoals.length;
+
     if (goals.length > 0) {
         const ws = goals[0].week_start;
         if (ws) {
             const d = new Date(ws + 'T00:00:00');
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-            label.textContent = `CTO Goals (Week of ${months[d.getMonth()]} ${d.getDate()})`;
+            label.textContent = `CTO Goals (Week of ${months[d.getMonth()]} ${d.getDate()}) - ${count}`;
         }
     } else {
         label.textContent = 'CTO Goals';
@@ -360,6 +366,45 @@ function renderGoals() {
         if (g.status === 'archived') continue;
         const row = document.createElement('div');
         row.className = 'goal-row';
+        row.draggable = true;
+        row.dataset.goalId = g.id;
+
+        // Drag handle
+        const handle = document.createElement('span');
+        handle.className = 'goal-drag-handle';
+        handle.textContent = '\u2630';
+        handle.title = 'Drag to reorder';
+        row.appendChild(handle);
+
+        // Drag events
+        row.addEventListener('dragstart', (e) => {
+            row.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', g.id);
+        });
+        row.addEventListener('dragend', () => {
+            row.classList.remove('dragging');
+            document.querySelectorAll('.goal-row.drag-over').forEach(r => r.classList.remove('drag-over'));
+        });
+        row.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const dragging = list.querySelector('.dragging');
+            if (dragging && dragging !== row) {
+                row.classList.add('drag-over');
+            }
+        });
+        row.addEventListener('dragleave', () => {
+            row.classList.remove('drag-over');
+        });
+        row.addEventListener('drop', (e) => {
+            e.preventDefault();
+            row.classList.remove('drag-over');
+            const draggedId = e.dataTransfer.getData('text/plain');
+            if (draggedId && draggedId !== g.id) {
+                reorderGoal(draggedId, g.id);
+            }
+        });
 
         // Status icon (clickable to cycle)
         const icon = document.createElement('span');
@@ -368,6 +413,16 @@ function renderGoals() {
         icon.title = `Status: ${g.status} (click to cycle)`;
         icon.addEventListener('click', () => cycleGoalStatus(g));
         row.appendChild(icon);
+
+        // Percent complete indicator
+        const pct = g.percent_complete || 0;
+        if (pct > 0 && g.status !== 'completed') {
+            const pctEl = document.createElement('span');
+            pctEl.className = 'goal-pct';
+            pctEl.textContent = pct + '%';
+            pctEl.title = pct + '% complete';
+            row.appendChild(pctEl);
+        }
 
         // Title
         const title = document.createElement('span');
@@ -461,6 +516,30 @@ async function archiveGoal(goalId) {
     }
 }
 
+async function reorderGoal(draggedId, targetId) {
+    const rows = document.querySelectorAll('.goal-row[data-goal-id]');
+    const ids = [...rows].map(r => r.dataset.goalId);
+    const fromIdx = ids.indexOf(draggedId);
+    const toIdx = ids.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    ids.splice(fromIdx, 1);
+    ids.splice(toIdx, 0, draggedId);
+
+    try {
+        await Promise.all(ids.map((id, i) =>
+            fetch(`/api/goals/${id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sort_order: i }),
+            })
+        ));
+        loadGoals();
+    } catch (e) {
+        console.error('Failed to reorder goals:', e);
+    }
+}
+
 function openGoalModal(goal) {
     const modal = document.getElementById('goal-modal');
     document.getElementById('goal-modal-title').textContent = goal ? 'Edit Goal' : 'Add Goal';
@@ -469,6 +548,13 @@ function openGoalModal(goal) {
     document.getElementById('goal-desc-input').value = goal ? (goal.description || '') : '';
     document.getElementById('goal-notes-input').value = '';
     document.getElementById('goal-notes-input').placeholder = goal ? 'Add a progress note...' : 'Initial progress note...';
+
+    const pctInput = document.getElementById('goal-pct-input');
+    const pctLabel = document.getElementById('goal-pct-label');
+    const pctVal = goal ? (goal.percent_complete || 0) : 0;
+    pctInput.value = pctVal;
+    pctLabel.textContent = pctVal + '%';
+    pctInput.oninput = () => { pctLabel.textContent = pctInput.value + '%'; };
 
     // Render note history
     const historyEl = document.getElementById('goal-notes-history');
@@ -505,12 +591,14 @@ async function saveGoal() {
     if (!title) return;
 
     const noteText = document.getElementById('goal-notes-input').value.trim() || null;
+    const pct = parseInt(document.getElementById('goal-pct-input').value) || 0;
 
     try {
         if (id) {
             const payload = {
                 title,
                 description: document.getElementById('goal-desc-input').value.trim() || null,
+                percent_complete: pct,
             };
             if (noteText) payload.progress_note = noteText;
             await fetch(`/api/goals/${id}`, {

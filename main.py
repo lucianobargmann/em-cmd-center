@@ -80,6 +80,12 @@ async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/goals/history", response_class=HTMLResponse)
+async def goals_history_page(request: Request) -> HTMLResponse:
+    """Serve the goal history page."""
+    return templates.TemplateResponse("goal_history.html", {"request": request})
+
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
